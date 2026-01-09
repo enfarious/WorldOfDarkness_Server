@@ -117,16 +117,75 @@ export interface Vector3 {
   z: number;
 }
 
+// ========== Stats ==========
+
+export interface CoreStats {
+  strength: number;
+  vitality: number;
+  dexterity: number;
+  agility: number;
+  intelligence: number;
+  wisdom: number;
+}
+
+export interface DerivedStats {
+  // Resources
+  maxHp: number;
+  maxStamina: number;
+  maxMana: number;
+  carryingCapacity: number;
+
+  // Physical Combat
+  attackRating: number;
+  defenseRating: number;
+  physicalAccuracy: number;
+  evasion: number;
+  damageAbsorption: number;
+  glancingBlowChance: number;
+
+  // Magic Combat
+  magicAttack: number;
+  magicDefense: number;
+  magicAccuracy: number;
+  magicEvasion: number;
+  magicAbsorption: number;
+
+  // Speed & Timing
+  initiative: number;
+  movementSpeed: number;
+  attackSpeedBonus: number;
+}
+
 export interface CharacterState {
   id: string;
   name: string;
+  level: number;
+  experience: number;
+  abilityPoints: number;
+
+  // Position
   position: Vector3;
   heading: number;  // 0-360 degrees, 0 = north, 90 = east, 180 = south, 270 = west
   rotation: Vector3;  // Full 3D rotation for VR/3D clients (pitch, yaw, roll)
+  currentSpeed?: 'walk' | 'jog' | 'run' | 'stop';
+
+  // Stats
+  coreStats: CoreStats;
+  derivedStats: DerivedStats;
+
+  // Current Resources
   health: { current: number; max: number };
   stamina: { current: number; max: number };
-  stats: Record<string, number>;
-  currentSpeed?: 'walk' | 'jog' | 'run' | 'stop';  // Current movement speed (optional)
+  mana: { current: number; max: number };
+
+  // Progression
+  unlockedFeats: string[];  // Array of feat IDs
+  unlockedAbilities: string[];  // Array of ability IDs
+
+  // Loadouts (8 active, 8 passive, 4 special)
+  activeLoadout: string[];  // 8 ability IDs
+  passiveLoadout: string[];  // 8 ability IDs
+  specialLoadout: string[];  // 4 ability IDs (from equipment)
 }
 
 export interface ZoneInfo {

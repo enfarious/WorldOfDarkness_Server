@@ -209,17 +209,57 @@ export class ClientSession {
       character: {
         id: this.characterId,
         name: 'Test Character',
+        level: 1,
+        experience: 0,
+        abilityPoints: 0,
+
+        // Position
         position: { x: 100, y: 0, z: 250 },
         heading: 0,  // Facing north
         rotation: { x: 0, y: 0, z: 0 },
-        health: { current: 100, max: 100 },
-        stamina: { current: 100, max: 100 },
-        stats: {
+        currentSpeed: 'stop',
+
+        // Stats
+        coreStats: {
           strength: 10,
+          vitality: 10,
+          dexterity: 10,
           agility: 10,
           intelligence: 10,
+          wisdom: 10,
         },
-        currentSpeed: 'stop',  // Not moving initially
+        derivedStats: {
+          maxHp: 200,
+          maxStamina: 100,
+          maxMana: 100,
+          carryingCapacity: 100,
+          attackRating: 30,
+          defenseRating: 5,
+          physicalAccuracy: 95,
+          evasion: 25,
+          damageAbsorption: 3,
+          glancingBlowChance: 5,
+          magicAttack: 30,
+          magicDefense: 5,
+          magicAccuracy: 95,
+          magicEvasion: 25,
+          magicAbsorption: 3,
+          initiative: 10,
+          movementSpeed: 6,
+          attackSpeedBonus: 5,
+        },
+
+        // Current Resources
+        health: { current: 200, max: 200 },
+        stamina: { current: 100, max: 100 },
+        mana: { current: 100, max: 100 },
+
+        // Progression
+        unlockedFeats: [],
+        unlockedAbilities: [],
+        activeLoadout: [],
+        passiveLoadout: [],
+        specialLoadout: [],
       },
       zone: {
         id: 'zone-crossroads',

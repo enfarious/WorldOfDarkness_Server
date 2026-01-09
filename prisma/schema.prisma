@@ -36,26 +36,50 @@ model Character {
   name            String
   level           Int             @default(1)
   experience      Int             @default(0)
+  abilityPoints   Int             @default(0)
 
   // Supernatural type and powers
   supernaturalType String?        // null for mortals, "vampire", "werewolf", etc
   supernaturalData Json?          // Type-specific data (clan, tribe, etc)
 
-  // Core stats
-  stats           Json            // { strength, agility, intellect, etc }
+  // Core Stats (6 primary attributes)
+  strength        Int             @default(10)
+  vitality        Int             @default(10)
+  dexterity       Int             @default(10)
+  agility         Int             @default(10)
+  intelligence    Int             @default(10)
+  wisdom          Int             @default(10)
+
+  // Derived stats (cached for performance)
+  maxHp           Int             @default(200)
+  maxStamina      Int             @default(100)
+  maxMana         Int             @default(100)
+  attackRating    Float           @default(30)
+  defenseRating   Float           @default(5)
+  magicAttack     Float           @default(30)
+  magicDefense    Float           @default(5)
+
+  // Current state
+  currentHp       Int             @default(200)
+  currentStamina  Int             @default(100)
+  currentMana     Int             @default(100)
 
   // Position in world
   zoneId          String
   positionX       Float
   positionY       Float
   positionZ       Float
-  rotation        Float           @default(0)
+  heading         Float           @default(0)  // 0-360 degrees
+  rotation        Float           @default(0)  // Deprecated, use heading
 
-  // State
-  currentHealth   Int
-  maxHealth       Int
-  currentStamina  Int
-  maxStamina      Int
+  // Progression
+  unlockedFeats     Json          @default("[]")  // Array of feat IDs
+  unlockedAbilities Json          @default("[]")  // Array of ability IDs
+
+  // Loadouts (8 active, 8 passive, 4 special)
+  activeLoadout   Json            @default("[]")  // 8 ability IDs
+  passiveLoadout  Json            @default("[]")  // 8 ability IDs
+  specialLoadout  Json            @default("[]")  // 4 ability IDs (from equipment)
 
   // Inventory
   inventory       InventoryItem[]
@@ -96,6 +120,9 @@ model Zone {
   terrainType     String          // "forest", "urban", "desert", etc
   weatherEnabled  Boolean         @default(true)
   timeOfDayEnabled Boolean        @default(true)
+
+  // Content rating
+  contentRating   String          @default("T")  // "T" (Teen), "M" (Mature), "AO" (Adults Only)
 
   // Navmesh data (stored as JSON for now, could be file reference)
   navmeshData     Json?
