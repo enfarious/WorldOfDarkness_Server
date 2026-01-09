@@ -22,7 +22,7 @@ export class Zone {
   private description?: string;
   private worldPosition: { x: number; y: number };
   private size: Vector3;
-  private terrainType: string;
+  private _terrainType: string;
 
   // Entities in this zone
   private entities: Set<string> = new Set();
@@ -37,7 +37,7 @@ export class Zone {
     this.description = config.description;
     this.worldPosition = { x: config.worldX, y: config.worldY };
     this.size = new Vector3(config.sizeX, config.sizeY, config.sizeZ);
-    this.terrainType = config.terrainType;
+    this._terrainType = config.terrainType;
   }
 
   async initialize(): Promise<void> {
@@ -88,6 +88,10 @@ export class Zone {
 
   getWeather(): string {
     return this.weather;
+  }
+
+  getTerrainType(): string {
+    return this._terrainType;
   }
 
   addEntity(entityId: string): void {

@@ -1,7 +1,11 @@
 {
   "permissions": {
     "allow": [
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nSet up World of Darkness MMO server foundation\n\nEstablish project infrastructure and core architecture for a Node.js/TypeScript\nMMO server with WebSocket networking, Prisma ORM, and modular design supporting\nmultiple client types \\(text, 2D, 3D, VR\\).\n\nCore Features:\n- Active Time Battle \\(ATB\\) combat system with cooldown-based actions\n- LLM-powered AI companions using Anthropic Claude API\n- Wildlife ecosystem simulation with life needs \\(hunger, thirst, aging\\)\n- Entity Component System architecture\n- Real-time networking via Socket.io + REST API\n\nInfrastructure:\n- TypeScript 5.7 with strict configuration\n- Jest testing framework with ts-jest\n- ESLint for code quality\n- Prisma ORM with PostgreSQL\n- Redis for caching and real-time state\n- Pino for structured logging\n\nProject Structure:\n- Networking layer \\(WebSocket server, client sessions, connection manager\\)\n- World management \\(zones with spatial indexing\\)\n- Utility modules \\(logger, Vector3 math\\)\n- Prisma schema for accounts, characters, and world state\n\nDocumentation:\n- Comprehensive architecture documentation \\(ARCHITECTURE.md\\)\n- Development roadmap and game design overview \\(README.md\\)\n- Task tracking \\(TODO.md\\), session notes \\(CHANGELOG.md\\), and implementation notes \\(NOTES.md\\)\n- Environment configuration template \\(.env.example\\)\n\nLicense: AGPL-3.0 \\(ensuring modified server source availability\\)\n\nCo-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "Bash(npm install)",
+      "Bash(npm run build:*)",
+      "Bash(npm install:*)"
     ]
   }
 }

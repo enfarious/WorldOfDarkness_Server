@@ -31,12 +31,12 @@ async function main() {
     await server.start();
     logger.info('Server started successfully');
   } catch (error) {
-    logger.error('Failed to start server:', error);
+    logger.error({ error }, 'Failed to start server');
     process.exit(1);
   }
 }
 
 main().catch((error) => {
-  logger.error('Unhandled error in main:', error);
+  logger.error({ error }, 'Unhandled error in main');
   process.exit(1);
 });
