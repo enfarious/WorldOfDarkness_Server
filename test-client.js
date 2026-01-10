@@ -5,9 +5,9 @@
  * Run with: node test-client.js
  */
 
-const io = require('socket.io-client');
+import io from 'socket.io-client';
 
-const SERVER_URL = 'http://localhost:3000';
+const SERVER_URL = 'http://localhost:3100';
 const PROTOCOL_VERSION = '1.0.0';
 
 // ANSI color codes for pretty output

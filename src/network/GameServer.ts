@@ -3,6 +3,7 @@ import cors from 'cors';
 import { Server as HTTPServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import { logger } from '@/utils/logger';
+import { db } from '@/database';
 import { ConnectionManager } from './ConnectionManager';
 import { WorldManager } from '@/world/WorldManager';
 
@@ -55,6 +56,10 @@ export class GameServer {
   }
 
   async start(): Promise<void> {
+    // Connect to database
+    logger.info('Connecting to database...');
+    await db.connect();
+
     // Start HTTP server
     this.httpServer = this.app.listen(this.config.port, () => {
       logger.info(`HTTP server listening on port ${this.config.port}`);
@@ -144,6 +149,9 @@ export class GameServer {
         });
       });
     }
+
+    // Disconnect from database
+    await db.disconnect();
 
     logger.info('Game server shutdown complete');
   }

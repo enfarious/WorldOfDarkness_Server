@@ -1,5 +1,7 @@
 import { Socket } from 'socket.io';
 import { logger } from '@/utils/logger';
+import { AccountService, CharacterService, ZoneService } from '@/database';
+import { StatCalculator } from '@/game/stats/StatCalculator';
 import {
   ClientType,
   ClientCapabilities,
@@ -120,21 +122,31 @@ export class ClientSession {
   }
 
   private async authenticateGuest(guestName: string): Promise<void> {
-    // TODO: Implement proper guest account creation
-    // For now, create temporary guest account
+    // Create guest account in database
+    const account = await AccountService.createGuestAccount(guestName);
+
     this.authenticated = true;
-    this.accountId = `guest-${this.socket.id}`;
+    this.accountId = account.id;
+
+    // Get existing characters (should be empty for new guest)
+    const characters = await CharacterService.findByAccountId(account.id);
 
     const response: AuthSuccessMessage['payload'] = {
-      accountId: this.accountId,
+      accountId: account.id,
       token: 'guest-token', // No real token for guests
-      characters: [], // Guests start with no characters
+      characters: characters.map(char => ({
+        id: char.id,
+        name: char.name,
+        level: char.level,
+        lastPlayed: char.lastSeenAt.getTime(),
+        location: 'Unknown', // TODO: Get zone name
+      })),
       canCreateCharacter: true,
       maxCharacters: 1, // Guests can only have one character
     };
 
     this.socket.emit('auth_success', response);
-    logger.info(`Guest authenticated: ${this.socket.id} as ${guestName}`);
+    logger.info(`Guest authenticated: ${this.socket.id} as ${guestName} (Account: ${account.id})`);
   }
 
   private async authenticateCredentials(_username: string, _password: string): Promise<void> {
@@ -174,9 +186,23 @@ export class ClientSession {
   private async handleCharacterSelect(data: CharacterSelectMessage['payload']): Promise<void> {
     logger.info(`Character select for ${this.socket.id}: ${data.characterId}`);
 
-    // TODO: Load character from database
-    // For now, mock character data
-    this.characterId = data.characterId;
+    // Verify character belongs to this account
+    const character = await CharacterService.findById(data.characterId);
+
+    if (!character) {
+      this.sendError('CHARACTER_NOT_FOUND', 'Character not found');
+      return;
+    }
+
+    if (character.accountId !== this.accountId) {
+      this.sendError('NOT_YOUR_CHARACTER', 'This character does not belong to your account');
+      return;
+    }
+
+    this.characterId = character.id;
+
+    // Update last seen
+    await CharacterService.updateLastSeen(character.id);
 
     // Send world entry message
     await this.enterWorld();
@@ -185,9 +211,24 @@ export class ClientSession {
   private async handleCharacterCreate(data: CharacterCreateMessage['payload']): Promise<void> {
     logger.info(`Character create for ${this.socket.id}: ${data.name}`);
 
-    // TODO: Create character in database
-    // For now, mock character creation
-    this.characterId = `char-${Date.now()}`;
+    if (!this.accountId) {
+      this.sendError('NOT_AUTHENTICATED', 'Must be authenticated to create character');
+      return;
+    }
+
+    // Create character in starter zone (The Crossroads)
+    const starterZoneId = 'zone-crossroads';
+    const character = await CharacterService.createCharacter({
+      accountId: this.accountId,
+      name: data.name,
+      zoneId: starterZoneId,
+      positionX: 100, // Center of The Crossroads
+      positionY: 0,
+      positionZ: 100,
+    });
+
+    this.characterId = character.id;
+    logger.info(`Created character: ${character.name} (ID: ${character.id})`);
 
     // Send world entry message
     await this.enterWorld();
@@ -201,107 +242,88 @@ export class ClientSession {
 
     logger.info(`Character ${this.characterId} entering world`);
 
-    // TODO: Load actual world state from database/world manager
-    // For now, send mock world entry data
+    // Load character with zone data from database
+    const character = await CharacterService.findByIdWithZone(this.characterId);
+
+    if (!character) {
+      this.sendError('CHARACTER_NOT_FOUND', 'Character data not found');
+      return;
+    }
+
+    const zone = character.zone;
+
+    // Calculate derived stats
+    const coreStats = {
+      strength: character.strength,
+      vitality: character.vitality,
+      dexterity: character.dexterity,
+      agility: character.agility,
+      intelligence: character.intelligence,
+      wisdom: character.wisdom,
+    };
+
+    const derivedStats = StatCalculator.calculateDerivedStats(coreStats, character.level);
+
+    // Get companions (NPCs) in the zone
+    const companions = await ZoneService.getCompanionsInZone(zone.id);
+
+    // Build entity list
+    const entities = companions.map(companion => ({
+      id: companion.id,
+      type: 'npc' as const,
+      name: companion.name,
+      position: { x: companion.positionX, y: companion.positionY, z: companion.positionZ },
+      description: companion.description || '',
+      interactive: true,
+    }));
+
     const worldEntry: WorldEntryMessage['payload'] = {
-      characterId: this.characterId,
+      characterId: character.id,
       timestamp: Date.now(),
       character: {
-        id: this.characterId,
-        name: 'Test Character',
-        level: 1,
-        experience: 0,
-        abilityPoints: 0,
+        id: character.id,
+        name: character.name,
+        level: character.level,
+        experience: character.experience,
+        abilityPoints: character.abilityPoints,
 
         // Position
-        position: { x: 100, y: 0, z: 250 },
-        heading: 0,  // Facing north
-        rotation: { x: 0, y: 0, z: 0 },
+        position: { x: character.positionX, y: character.positionY, z: character.positionZ },
+        heading: character.heading,
+        rotation: { x: 0, y: character.heading, z: 0 },
         currentSpeed: 'stop',
 
         // Stats
-        coreStats: {
-          strength: 10,
-          vitality: 10,
-          dexterity: 10,
-          agility: 10,
-          intelligence: 10,
-          wisdom: 10,
-        },
-        derivedStats: {
-          maxHp: 200,
-          maxStamina: 100,
-          maxMana: 100,
-          carryingCapacity: 100,
-          attackRating: 30,
-          defenseRating: 5,
-          physicalAccuracy: 95,
-          evasion: 25,
-          damageAbsorption: 3,
-          glancingBlowChance: 5,
-          magicAttack: 30,
-          magicDefense: 5,
-          magicAccuracy: 95,
-          magicEvasion: 25,
-          magicAbsorption: 3,
-          initiative: 10,
-          movementSpeed: 6,
-          attackSpeedBonus: 5,
-        },
+        coreStats,
+        derivedStats,
 
         // Current Resources
-        health: { current: 200, max: 200 },
-        stamina: { current: 100, max: 100 },
-        mana: { current: 100, max: 100 },
+        health: { current: character.currentHp, max: character.maxHp },
+        stamina: { current: character.currentStamina, max: character.maxStamina },
+        mana: { current: character.currentMana, max: character.maxMana },
 
         // Progression
-        unlockedFeats: [],
-        unlockedAbilities: [],
-        activeLoadout: [],
-        passiveLoadout: [],
-        specialLoadout: [],
+        unlockedFeats: character.unlockedFeats as string[],
+        unlockedAbilities: character.unlockedAbilities as string[],
+        activeLoadout: character.activeLoadout as string[],
+        passiveLoadout: character.passiveLoadout as string[],
+        specialLoadout: character.specialLoadout as string[],
       },
       zone: {
-        id: 'zone-crossroads',
-        name: 'The Crossroads',
-        description:
-          'A weathered crossroads where five ancient paths converge. Moss-covered stones mark each direction, their inscriptions long faded. A sense of anticipation hangs in the air.',
-        weather: 'clear',
-        timeOfDay: 'dusk',
-        lighting: 'dim',
-        contentRating: 'T',  // Teen - public area with fantasy combat
+        id: zone.id,
+        name: zone.name,
+        description: zone.description || '',
+        weather: 'clear', // TODO: Dynamic weather system
+        timeOfDay: 'dusk', // TODO: Dynamic time of day
+        lighting: 'dim', // TODO: Calculate based on time
+        contentRating: zone.contentRating as 'T' | 'M' | 'AO',
       },
-      entities: [
-        {
-          id: 'npc-merchant-1',
-          type: 'npc',
-          name: 'Old Merchant',
-          position: { x: 102, y: 0, z: 248 },
-          description: 'A weathered merchant with kind eyes, tending a small cart.',
-          interactive: true,
-        },
-      ],
-      exits: [
-        {
-          direction: 'north',
-          name: 'Forest Path',
-          description: 'A dark trail leading into dense woods.',
-        },
-        {
-          direction: 'south',
-          name: "King's Road",
-          description: 'A well-maintained road toward civilization.',
-        },
-        {
-          direction: 'east',
-          name: 'Mountain Pass',
-          description: 'A steep rocky path ascending into the peaks.',
-        },
-      ],
+      entities,
+      exits: [], // TODO: Generate exits from navmesh or zone connections
     };
 
     this.socket.emit('world_entry', worldEntry);
-    logger.info(`World entry sent for character ${this.characterId}`);
+    logger.info(`World entry sent for character ${character.name} in ${zone.name}`);
   }
 
   isAuthenticated(): boolean {
