@@ -2,11 +2,15 @@
 
 Last updated: 2026-01-10
 
+## Vision
+
+**The 37-Hour War transformed everything.** Build a post-apocalyptic MMO set in upstate New York, 100 years after AI-deployed nanotech changed humanity forever. Real geography. Six client modalities. One persistent world.
+
+See [LORE.md](LORE.md) for complete world background.
+
 ## Current Status
 
 **MILESTONE: Distributed architecture complete!**
-
-The server now supports horizontal scaling across multiple machines:
 
 **Architecture:**
 
@@ -18,36 +22,129 @@ The server now supports horizontal scaling across multiple machines:
 
 **What's Working:**
 
-- Single-shard world (everyone shares same universe, not separated into "World 1, World 2")
+- Single-shard world (everyone shares same universe, not "World 1, World 2")
 - Zones distributed across multiple physical machines
 - Players seamlessly interact across server boundaries
 - Gateway servers handle 10k+ concurrent connections
 - Zone servers scale based on player density per zone
 - Automatic health monitoring via Redis heartbeats
+- Database persistence (PostgreSQL)
+- Movement and proximity detection
+- NPC system ready
 
-**Deployment Modes:**
+**Setting:**
 
-1. **Single-Server** (Dev): Everything on one machine - `./start-distributed.ps1`
-2. **Multi-Server** (Prod): Gateways + Zone Servers distributed geographically
-3. **Geographic Sharding**: NYC zones on East Coast, LA zones on West Coast, etc.
+- **Post-apocalyptic upstate New York** (Stephentown NY, Berkshire County MA, Rensselaer/Albany Counties NY)
+- Real geography from OpenStreetMap
+- 100 years after The 37-Hour War
+- Nanotech-transformed humans (werewolves, vampires, dragons, psionics, cyber-enhanced, mages)
+- Corruption zones, faction conflicts, mysteries
 
-See [DISTRIBUTED.md](DISTRIBUTED.md) for full architecture documentation.
+**Planned Client Modalities:**
 
-## Recommended Next Step
+1. **Text Client** (MUD/MOO style) - Classic text commands
+2. **LLM Airlock** - Natural language interface with AI Narrator
+3. **2D Client** - Web-based point-and-click (isometric/top-down)
+4. **3D Client** - Traditional MMO (Unity/Godot, keyboard+mouse)
+5. **VR Client** - Full immersion (optional)
+6. **AR Client** - Real-world exploration (GPS-based)
 
-**Test the Distributed Setup:**
+All clients connect to the same server, see the same world, interact with same players.
 
-1. Install Redis: `winget install Redis.Redis` or download from redis.io
-2. Run: `./start-distributed.ps1`
-3. Test: `node test-client.js`
-4. Verify proximity rosters work across message bus
+## Recommended Next Steps
 
-**Then Implement Communication System:**
+### Phase 1: World Building (Current Focus)
 
-1. Chat message handling (say, shout, emote, whisper)
-2. Range-based message broadcasting via proximity
-3. NPC dialogue system
-4. Interaction commands
+1. **OpenStreetMap Integration**
+   - Import real geography data for starting region
+   - Generate zones from actual locations
+   - Seed database with landmarks as POIs
+   - Add corruption zones and nanotech anomalies
+
+2. **Narrator System**
+   - Build AI narrator for critical moments
+   - Integrate with dice rolls (failed = vague, success = detailed)
+   - Context-aware narration (danger, exploration, combat)
+   - Never lies, but doesn't tell everything
+
+3. **Text Client (Priority)**
+   - Classic MUD-style interface
+   - Command parser (`look`, `move`, `examine`, `say`, etc.)
+   - Proves server architecture works
+   - Foundation for other clients
+   - Fastest to build and test
+
+### Phase 2: LLM Integration
+
+4. **LLM Airlock Completion**
+   - Natural language command processing
+   - LLM-controlled NPCs
+   - Dynamic dialogue system
+   - Narrator personality and tone
+
+5. **NPC Intelligence**
+   - LLMs control NPC behavior
+   - Contextual responses
+   - Quest generation
+   - Faction interactions
+
+### Phase 3: Additional Clients
+
+6. **2D Web Client**
+   - Browser-based, top-down view
+   - WebGL or Canvas rendering
+   - Point-and-click interface
+   - Guild management features
+
+7. **3D Client (Unity/Godot)**
+   - Traditional MMO experience
+   - Full 3D rendering of upstate NY
+   - Keyboard+mouse controls
+   - No VR required
+
+8. **AR Client**
+   - Mobile GPS-based exploration
+   - Real-world location = game location
+   - Camera overlay
+   - Casual/exploration focus
+
+9. **VR Client**
+   - Full immersion option
+   - Same world as other clients
+   - Hand tracking, voice commands
+   - Deep dive experience
+
+## Technical Roadmap
+
+**Immediate (Week 1-2):**
+- [ ] Test distributed server with Redis
+- [ ] Build basic text client
+- [ ] Implement core commands (move, look, say, examine)
+- [ ] Add narrator responses to actions
+
+**Short-term (Month 1):**
+- [ ] Import OpenStreetMap data for Stephentown region
+- [ ] Generate zones from real geography
+- [ ] Implement LLM narrator system
+- [ ] Build NPC AI with LLM control
+- [ ] Add dice rolling mechanics
+- [ ] Create character races (Changed types)
+
+**Medium-term (Months 2-3):**
+- [ ] Expand to full 4-county region
+- [ ] Build 2D web client
+- [ ] Implement crafting system
+- [ ] Add corruption zones with dynamic effects
+- [ ] Faction system and reputation
+- [ ] Quest generation via LLM
+
+**Long-term (Months 4-6):**
+- [ ] 3D client (Unity/Godot)
+- [ ] Combat system refinement
+- [ ] AR client prototype
+- [ ] Player housing and building
+- [ ] Dynamic world events
+- [ ] VR client (if time/interest)
 
 ## Quick Start
 
