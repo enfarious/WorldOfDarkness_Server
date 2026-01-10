@@ -109,17 +109,45 @@ socket.on('world_entry', (data) => {
   // Display the world in text format
   displayWorld(data);
 
-  // Send a test ping after 2 seconds
-  setTimeout(() => {
-    log('\n>>> Sending ping...', 'yellow');
-    socket.emit('ping', { timestamp: Date.now() });
-  }, 2000);
+  // Test movement - move towards The Old Merchant
+  let moveCount = 0;
+  const moveInterval = setInterval(() => {
+    moveCount++;
 
-  // Disconnect after 5 seconds
-  setTimeout(() => {
-    log('\n>>> Disconnecting...', 'yellow');
-    socket.disconnect();
-  }, 5000);
+    // Move 10 units north (towards the NPC at 100,0,50)
+    const newZ = data.character.position.z - 10;
+
+    log(`\n>>> Moving north (move ${moveCount}/3)...`, 'yellow');
+    socket.emit('move', {
+      position: {
+        x: data.character.position.x,
+        y: data.character.position.y,
+        z: newZ,
+      },
+      heading: 0, // North
+      speed: 'walk',
+    });
+
+    // Update our local position for next move
+    data.character.position.z = newZ;
+
+    // Stop after 3 moves
+    if (moveCount >= 3) {
+      clearInterval(moveInterval);
+
+      // Disconnect after final move
+      setTimeout(() => {
+        log('\n>>> Disconnecting...', 'yellow');
+        socket.disconnect();
+      }, 2000);
+    }
+  }, 2000);
+});
+
+// Handle proximity roster updates
+socket.on('proximity_roster', (data) => {
+  logEvent('proximity_roster', data);
+  displayProximityRoster(data);
 });
 
 // Handle pong response
@@ -201,4 +229,50 @@ function displayWorld(worldEntry) {
   }
 
   log('\n' + '='.repeat(60), 'magenta');
+}
+
+// Helper function to display proximity roster
+function displayProximityRoster(roster) {
+  log('\n' + '='.repeat(60), 'cyan');
+  log('PROXIMITY ROSTER', 'bright');
+  log('='.repeat(60), 'cyan');
+
+  // Danger state
+  if (roster.dangerState) {
+    log('\n⚔️  COMBAT MODE ⚔️', 'red');
+  }
+
+  // Display each channel
+  const channels = [
+    { name: 'Touch', key: 'touch', range: '5ft', color: 'magenta' },
+    { name: 'Say', key: 'say', range: '20ft', color: 'cyan' },
+    { name: 'Shout', key: 'shout', range: '150ft', color: 'yellow' },
+    { name: 'Emote', key: 'emote', range: '150ft', color: 'blue' },
+    { name: 'See', key: 'see', range: '150ft', color: 'green' },
+    { name: 'Hear', key: 'hear', range: '150ft', color: 'blue' },
+    { name: 'CFH', key: 'cfh', range: '250ft', color: 'yellow' },
+  ];
+
+  channels.forEach(channel => {
+    const data = roster.channels[channel.key];
+    if (!data) return;
+
+    log(`\n${channel.name} (${channel.range}):`, channel.color);
+
+    if (data.count === 0) {
+      log('  No one nearby', 'reset');
+    } else if (data.sample) {
+      // Show individual names (1-3 people)
+      data.sample.forEach(name => {
+        const isLastSpeaker = data.lastSpeaker === name;
+        const marker = isLastSpeaker ? ' [Last Speaker]' : '';
+        log(`  - ${name}${marker}`, isLastSpeaker ? 'bright' : 'cyan');
+      });
+    } else {
+      // Show crowd count (4+ people)
+      log(`  ${data.count} people (crowd mode)`, 'yellow');
+    }
+  });
+
+  log('\n' + '='.repeat(60), 'cyan');
 }

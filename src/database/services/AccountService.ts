@@ -35,10 +35,13 @@ export class AccountService {
    */
   static async createGuestAccount(guestName: string): Promise<Account> {
     const timestamp = Date.now();
+    // Ensure username is unique by appending timestamp
+    const uniqueUsername = guestName ? `${guestName}-${timestamp}` : `Guest${timestamp}`;
+
     return prisma.account.create({
       data: {
         email: `guest-${timestamp}@temp.worldofdarkness.com`,
-        username: guestName || `Guest${timestamp}`,
+        username: uniqueUsername,
         passwordHash: '', // No password for guests
       },
     });

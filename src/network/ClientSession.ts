@@ -2,6 +2,7 @@ import { Socket } from 'socket.io';
 import { logger } from '@/utils/logger';
 import { AccountService, CharacterService, ZoneService } from '@/database';
 import { StatCalculator } from '@/game/stats/StatCalculator';
+import { WorldManager } from '@/world/WorldManager';
 import {
   ClientType,
   ClientCapabilities,
@@ -30,10 +31,14 @@ export class ClientSession {
   private authenticated: boolean = false;
   private characterId: string | null = null;
   private accountId: string | null = null;
+  private currentZoneId: string | null = null;
   private lastPingTime: number = Date.now();
   private clientInfo: ClientInfo | null = null;
 
-  constructor(private socket: Socket) {
+  constructor(
+    private socket: Socket,
+    private worldManager: WorldManager
+  ) {
     this.setupMessageHandlers();
   }
 
@@ -56,10 +61,9 @@ export class ClientSession {
     });
 
     // Movement
-    this.socket.on('move', (data: MoveMessage['payload']) => {
-      if (!this.characterId) return;
-      logger.debug({ data }, `Move request from ${this.socket.id}`);
-      // TODO: Handle movement
+    this.socket.on('move', async (data: MoveMessage['payload']) => {
+      if (!this.characterId || !this.currentZoneId) return;
+      await this.handleMovement(data);
     });
 
     // Chat
@@ -324,6 +328,42 @@ export class ClientSession {
 
     this.socket.emit('world_entry', worldEntry);
     logger.info(`World entry sent for character ${character.name} in ${zone.name}`);
+
+    // Register player with WorldManager
+    this.currentZoneId = zone.id;
+    await this.worldManager.addPlayerToZone(character, this.socket.id);
+  }
+
+  private async handleMovement(data: MoveMessage['payload']): Promise<void> {
+    if (!this.characterId || !this.currentZoneId) return;
+
+    const { position, heading } = data;
+
+    if (!position) {
+      logger.warn({ characterId: this.characterId }, 'Movement request missing position');
+      return;
+    }
+
+    // Update position in database
+    await CharacterService.updatePosition(this.characterId, {
+      x: position.x,
+      y: position.y,
+      z: position.z,
+      heading: heading !== undefined ? heading : undefined,
+    });
+
+    // Update position in WorldManager (triggers proximity roster updates)
+    await this.worldManager.updatePlayerPosition(
+      this.characterId,
+      this.currentZoneId,
+      position
+    );
+
+    logger.debug({
+      characterId: this.characterId,
+      position,
+      heading,
+    }, 'Player moved');
   }
 
   isAuthenticated(): boolean {
@@ -354,11 +394,17 @@ export class ClientSession {
     this.socket.disconnect(true);
   }
 
-  cleanup(): void {
+  async cleanup(): Promise<void> {
+    // Remove player from world manager
+    if (this.characterId && this.currentZoneId) {
+      await this.worldManager.removePlayerFromZone(this.characterId, this.currentZoneId);
+    }
+
     // Cleanup any resources
     this.authenticated = false;
     this.characterId = null;
     this.accountId = null;
+    this.currentZoneId = null;
     this.clientInfo = null;
   }
 

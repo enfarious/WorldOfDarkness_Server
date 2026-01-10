@@ -1,70 +1,211 @@
 import { logger } from '@/utils/logger';
-import { Zone } from './Zone';
+import { ZoneService } from '@/database';
+import { ZoneManager } from './ZoneManager';
+import type { Server as SocketIOServer } from 'socket.io';
+import type { Character } from '@prisma/client';
 
 /**
- * Manages the entire game world, zones, and world state
+ * Manages the entire game world - all zones and their entities
  */
 export class WorldManager {
-  private zones: Map<string, Zone> = new Map();
-  private activeZones: Set<string> = new Set();
+  private zones: Map<string, ZoneManager> = new Map();
+  private io: SocketIOServer | null = null;
+  private characterToZone: Map<string, string> = new Map(); // characterId -> zoneId for quick lookups
 
+  /**
+   * Set Socket.IO server for broadcasting
+   */
+  setIO(io: SocketIOServer): void {
+    this.io = io;
+  }
+
+  /**
+   * Initialize world manager - load all zones from database
+   */
   async initialize(): Promise<void> {
     logger.info('Initializing world manager...');
 
-    // TODO: Load zones from database
-    // For now, create a test zone
-    await this.createTestZone();
+    // Load all zones from database
+    const allZones = await ZoneService.findAll();
+
+    for (const zone of allZones) {
+      const zoneManager = new ZoneManager(zone);
+      await zoneManager.initialize();
+      this.zones.set(zone.id, zoneManager);
+    }
 
     logger.info(`World manager initialized with ${this.zones.size} zones`);
   }
 
-  private async createTestZone(): Promise<void> {
-    const testZone = new Zone({
-      id: 'test-zone-1',
-      name: 'Starting Forest',
-      description: 'A dense, dark forest where new characters begin their journey',
-      worldX: 0,
-      worldY: 0,
-      sizeX: 1000,
-      sizeY: 1000,
-      sizeZ: 100,
-      terrainType: 'forest',
-    });
+  /**
+   * Get or create zone manager for a zone
+   */
+  async getZoneManager(zoneId: string): Promise<ZoneManager | null> {
+    // Return existing zone manager
+    if (this.zones.has(zoneId)) {
+      return this.zones.get(zoneId)!;
+    }
 
-    await testZone.initialize();
-    this.zones.set(testZone.getId(), testZone);
-    this.activeZones.add(testZone.getId());
+    // Load zone from database if not in memory
+    const zone = await ZoneService.findById(zoneId);
+    if (!zone) {
+      logger.warn({ zoneId }, 'Zone not found in database');
+      return null;
+    }
 
-    logger.info(`Created test zone: ${testZone.getName()}`);
+    // Create and initialize new zone manager
+    const zoneManager = new ZoneManager(zone);
+    await zoneManager.initialize();
+    this.zones.set(zoneId, zoneManager);
+
+    logger.info({ zoneId, zoneName: zone.name }, 'Loaded zone on demand');
+    return zoneManager;
   }
 
-  update(deltaTime: number): void {
-    // Update all active zones
-    for (const zoneId of this.activeZones) {
-      const zone = this.zones.get(zoneId);
-      if (zone) {
-        zone.update(deltaTime);
+  /**
+   * Add a player to a zone
+   */
+  async addPlayerToZone(character: Character, socketId: string): Promise<void> {
+    const zoneManager = await this.getZoneManager(character.zoneId);
+    if (!zoneManager) {
+      logger.error({ characterId: character.id, zoneId: character.zoneId }, 'Cannot add player to zone - zone not found');
+      return;
+    }
+
+    zoneManager.addPlayer(character, socketId);
+    this.characterToZone.set(character.id, character.zoneId);
+
+    // Send proximity roster to the player
+    this.sendProximityRosterToPlayer(character.id);
+
+    // Broadcast to nearby players that someone entered
+    this.broadcastNearbyUpdate(character.zoneId);
+  }
+
+  /**
+   * Remove a player from a zone
+   */
+  async removePlayerFromZone(characterId: string, zoneId: string): Promise<void> {
+    const zoneManager = this.zones.get(zoneId);
+    if (!zoneManager) return;
+
+    zoneManager.removePlayer(characterId);
+    this.characterToZone.delete(characterId);
+
+    // Broadcast to nearby players that someone left
+    this.broadcastNearbyUpdate(zoneId);
+  }
+
+  /**
+   * Update player position and broadcast updates
+   */
+  async updatePlayerPosition(
+    characterId: string,
+    zoneId: string,
+    position: { x: number; y: number; z: number }
+  ): Promise<void> {
+    const zoneManager = this.zones.get(zoneId);
+    if (!zoneManager) return;
+
+    zoneManager.updatePlayerPosition(characterId, position);
+
+    // Send updated proximity roster to the player
+    this.sendProximityRosterToPlayer(characterId);
+
+    // Broadcast to nearby players about position change
+    this.broadcastNearbyUpdate(zoneId);
+  }
+
+  /**
+   * Send proximity roster to a specific player
+   */
+  private sendProximityRosterToPlayer(characterId: string): void {
+    // Find which zone the character is in
+    const zoneId = this.characterToZone.get(characterId);
+    if (!zoneId) return;
+
+    const zoneManager = this.zones.get(zoneId);
+    if (!zoneManager || !this.io) return;
+
+    const roster = zoneManager.calculateProximityRoster(characterId);
+    if (!roster) return;
+
+    const socketId = zoneManager.getSocketIdForCharacter(characterId);
+    if (!socketId) return;
+
+    // Send proximity roster to the player
+    this.io.to(socketId).emit('proximity_roster', {
+      ...roster,
+      timestamp: Date.now(),
+    });
+  }
+
+  /**
+   * Broadcast proximity roster updates to all nearby players in a zone
+   */
+  private broadcastNearbyUpdate(zoneId: string): void {
+    const zoneManager = this.zones.get(zoneId);
+    if (!zoneManager || !this.io) return;
+
+    // Send updated rosters to all players in the zone
+    // For each character in the zone, calculate and send their updated roster
+    for (const [characterId, charZoneId] of this.characterToZone.entries()) {
+      if (charZoneId === zoneId) {
+        this.sendProximityRosterToPlayer(characterId);
       }
     }
   }
 
-  getZone(zoneId: string): Zone | undefined {
-    return this.zones.get(zoneId);
-  }
-
-  getAllZones(): Zone[] {
-    return Array.from(this.zones.values());
-  }
-
-  activateZone(zoneId: string): void {
-    if (this.zones.has(zoneId)) {
-      this.activeZones.add(zoneId);
-      logger.debug(`Activated zone: ${zoneId}`);
+  /**
+   * Record last speaker for proximity tracking
+   */
+  recordLastSpeaker(zoneId: string, listenerId: string, speakerName: string): void {
+    const zoneManager = this.zones.get(zoneId);
+    if (zoneManager) {
+      zoneManager.recordLastSpeaker(listenerId, speakerName);
     }
   }
 
-  deactivateZone(zoneId: string): void {
-    this.activeZones.delete(zoneId);
-    logger.debug(`Deactivated zone: ${zoneId}`);
+  /**
+   * Get socket IDs of players in range (for broadcasting messages)
+   */
+  getPlayersInRange(
+    zoneId: string,
+    position: { x: number; y: number; z: number },
+    range: number,
+    excludeCharacterId?: string
+  ): string[] {
+    const zoneManager = this.zones.get(zoneId);
+    if (!zoneManager) return [];
+
+    return zoneManager.getPlayerSocketIdsInRange(position, range, excludeCharacterId);
+  }
+
+  /**
+   * Update tick - called by game loop
+   */
+  update(_deltaTime: number): void {
+    // TODO: Update world simulation
+    // - Weather changes
+    // - Time of day
+    // - NPC AI
+    // - Combat ticks
+  }
+
+  /**
+   * Get world statistics
+   */
+  getStats(): { totalZones: number; loadedZones: number; totalPlayers: number } {
+    let totalPlayers = 0;
+
+    for (const zoneManager of this.zones.values()) {
+      totalPlayers += zoneManager.getPlayerCount();
+    }
+
+    return {
+      totalZones: this.zones.size,
+      loadedZones: this.zones.size,
+      totalPlayers,
+    };
   }
 }

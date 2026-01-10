@@ -77,10 +77,11 @@ export class GameServer {
     logger.info(`WebSocket server initialized`);
 
     // Initialize managers
-    this.connectionManager = new ConnectionManager(this.io);
     this.worldManager = new WorldManager();
-
+    this.worldManager.setIO(this.io);
     await this.worldManager.initialize();
+
+    this.connectionManager = new ConnectionManager(this.io, this.worldManager);
 
     // Start game loop
     this.startGameLoop();

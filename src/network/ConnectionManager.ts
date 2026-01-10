@@ -1,6 +1,7 @@
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import { logger } from '@/utils/logger';
 import { ClientSession } from './ClientSession';
+import { WorldManager } from '@/world/WorldManager';
 import {
   HandshakeMessage,
   HandshakeAckMessage,
@@ -17,7 +18,10 @@ export class ConnectionManager {
   private readonly PROTOCOL_VERSION = '1.0.0';
   private readonly SERVER_VERSION = '0.1.0';
 
-  constructor(private io: SocketIOServer) {
+  constructor(
+    private io: SocketIOServer,
+    private worldManager: WorldManager
+  ) {
     this.setupSocketHandlers();
   }
 
@@ -26,7 +30,7 @@ export class ConnectionManager {
       logger.info(`New connection: ${socket.id} from ${socket.handshake.address}`);
 
       // Create session for this connection
-      const session = new ClientSession(socket);
+      const session = new ClientSession(socket, this.worldManager);
       this.sessions.set(socket.id, session);
 
       // Handle handshake (first message from client)
@@ -59,10 +63,10 @@ export class ConnectionManager {
       });
 
       // Handle disconnection
-      socket.on('disconnect', (reason) => {
+      socket.on('disconnect', async (reason) => {
         logger.info(`Client disconnected: ${socket.id}, reason: ${reason}`);
         this.sessions.delete(socket.id);
-        session.cleanup();
+        await session.cleanup();
       });
     });
   }
