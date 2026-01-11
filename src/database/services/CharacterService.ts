@@ -13,6 +13,15 @@ export class CharacterService {
   }
 
   /**
+   * Find character by name (case-insensitive)
+   */
+  static async findByName(name: string): Promise<Character | null> {
+    return prisma.character.findFirst({
+      where: { name: { equals: name, mode: 'insensitive' } },
+    });
+  }
+
+  /**
    * Find character by ID with zone data
    */
   static async findByIdWithZone(characterId: string): Promise<(Character & { zone: Zone }) | null> {

@@ -208,6 +208,18 @@ socket.on('chat', (data) => {
   log('='.repeat(60), 'yellow');
 });
 
+// Handle communication broadcasts (protocol v1)
+socket.on('communication', (data) => {
+  log('\n' + '='.repeat(60), 'yellow');
+  log(`[${(data.type || data.channel || 'say').toUpperCase()}] ${data.senderName || data.sender || 'unknown'}: ${data.content || data.message || ''}`, 'bright');
+  log('='.repeat(60), 'yellow');
+});
+
+// Handle state updates
+socket.on('state_update', (data) => {
+  logEvent('state_update', data);
+});
+
 // Handle pong response
 socket.on('pong', (data) => {
   const latency = Date.now() - data.clientTimestamp;

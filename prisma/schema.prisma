@@ -195,6 +195,7 @@ model InventoryItem {
 model Companion {
   id              String          @id @default(uuid())
   name            String
+  tag             String?
   description     String?
 
   // AI configuration
@@ -218,12 +219,17 @@ model Companion {
   llmModel        String          @default("claude-3-5-sonnet-20241022")
   systemPrompt    String?
 
+  // Airlock possession (persistent LLM pairing)
+  possessedAirlockId String?
+
   // Conversation history (recent only, older in separate storage)
   conversationHistory Json        @default("[]")
 
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
 
+  @@index([tag])
+  @@index([possessedAirlockId])
   @@map("companions")
 }
 

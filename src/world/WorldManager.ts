@@ -65,14 +65,14 @@ export class WorldManager {
   /**
    * Add a player to a zone
    */
-  async addPlayerToZone(character: Character, socketId: string): Promise<void> {
+  async addPlayerToZone(character: Character, socketId: string, isMachine: boolean = false): Promise<void> {
     const zoneManager = await this.getZoneManager(character.zoneId);
     if (!zoneManager) {
       logger.error({ characterId: character.id, zoneId: character.zoneId }, 'Cannot add player to zone - zone not found');
       return;
     }
 
-    zoneManager.addPlayer(character, socketId);
+    zoneManager.addPlayer(character, socketId, isMachine);
     this.characterToZone.set(character.id, character.zoneId);
 
     // Send proximity roster to the player

@@ -102,7 +102,7 @@ export class CommandRegistry {
   /**
    * Get completion suggestions for partial command
    */
-  getCompletions(partial: string, context?: CommandContext): CompletionSuggestion[] {
+  getCompletions(partial: string, _context?: CommandContext): CompletionSuggestion[] {
     const lowerPartial = partial.toLowerCase();
     const suggestions: CompletionSuggestion[] = [];
 

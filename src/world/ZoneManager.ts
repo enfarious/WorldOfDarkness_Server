@@ -24,6 +24,7 @@ interface Entity {
   position: Vector3;
   socketId?: string; // For players only
   inCombat?: boolean;
+  isMachine: boolean;
 }
 
 /**
@@ -58,6 +59,7 @@ export class ZoneManager {
           z: companion.positionZ,
         },
         inCombat: false,
+        isMachine: true,
       });
     }
 
@@ -70,7 +72,7 @@ export class ZoneManager {
   /**
    * Add a player to the zone
    */
-  addPlayer(character: Character, socketId: string): void {
+  addPlayer(character: Character, socketId: string, isMachine: boolean = false): void {
     const entity: Entity = {
       id: character.id,
       name: character.name,
@@ -82,6 +84,7 @@ export class ZoneManager {
       },
       socketId,
       inCombat: false,
+      isMachine,
     };
 
     this.entities.set(character.id, entity);
@@ -109,6 +112,13 @@ export class ZoneManager {
     }
   }
 
+  setCompanionSocketId(companionId: string, socketId: string | null): void {
+    const entity = this.entities.get(companionId);
+    if (entity && entity.type !== 'player') {
+      entity.socketId = socketId || undefined;
+    }
+  }
+
   /**
    * Set combat state for an entity
    */
@@ -117,6 +127,10 @@ export class ZoneManager {
     if (entity) {
       entity.inCombat = inCombat;
     }
+  }
+
+  getEntity(entityId: string): Entity | null {
+    return this.entities.get(entityId) || null;
   }
 
   /**
@@ -229,6 +243,7 @@ export class ZoneManager {
         id: entity.id,
         name: entity.name,
         type: entity.type,
+        isMachine: entity.isMachine,
         bearing,
         elevation,
         range: Math.round(range * 100) / 100, // Round to 2 decimal places
@@ -533,6 +548,24 @@ export class ZoneManager {
   getSocketIdForCharacter(characterId: string): string | null {
     const entity = this.entities.get(characterId);
     return entity?.socketId || null;
+  }
+
+  getSocketIdForEntity(entityId: string): string | null {
+    const entity = this.entities.get(entityId);
+    return entity?.socketId || null;
+  }
+
+  getCompanionSocketIdsInRange(origin: Vector3, range: number, excludeId?: string): string[] {
+    const nearbyEntities = this.getEntitiesInRange(origin, range, excludeId);
+    const socketIds: string[] = [];
+
+    for (const entity of nearbyEntities) {
+      if (entity.type !== 'player' && entity.socketId) {
+        socketIds.push(entity.socketId);
+      }
+    }
+
+    return socketIds;
   }
 
   /**

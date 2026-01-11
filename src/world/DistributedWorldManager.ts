@@ -1,9 +1,13 @@
 import { logger } from '@/utils/logger';
-import { ZoneService } from '@/database';
+import { CharacterService, ZoneService } from '@/database';
 import { ZoneManager } from './ZoneManager';
 import { MessageBus, MessageType, ZoneRegistry, type MessageEnvelope, type ClientMessagePayload } from '@/messaging';
 import { NPCAIController, LLMService } from '@/ai';
+import { CommandRegistry, CommandParser, CommandExecutor, registerAllCommands } from '@/commands';
+import type { CommandContext, CommandEvent } from '@/commands/types';
 import type { Character, Companion } from '@prisma/client';
+
+const FEET_TO_METERS = 0.3048;
 
 /**
  * Distributed World Manager - manages zones across multiple servers
@@ -14,11 +18,17 @@ import type { Character, Companion } from '@prisma/client';
 export class DistributedWorldManager {
   private zones: Map<string, ZoneManager> = new Map();
   private characterToZone: Map<string, string> = new Map();
+  private companionToZone: Map<string, string> = new Map();
   private npcControllers: Map<string, NPCAIController> = new Map(); // companionId -> controller
   private llmService: LLMService;
   private recentChatMessages: Map<string, { sender: string; channel: string; message: string; timestamp: number }[]> = new Map(); // zoneId -> messages
   private proximityRosterHashes: Map<string, string> = new Map(); // characterId -> roster hash (for dirty checking - legacy)
   private previousRosters: Map<string, any> = new Map(); // characterId -> previous roster (for delta calculation)
+
+  // Command system
+  private commandRegistry: CommandRegistry;
+  private commandParser: CommandParser;
+  private commandExecutor: CommandExecutor | null = null;
 
   constructor(
     private messageBus: MessageBus,
@@ -27,6 +37,13 @@ export class DistributedWorldManager {
     private assignedZoneIds: string[] = [] // Zones this server should manage
   ) {
     this.llmService = new LLMService();
+
+    // Initialize command system
+    this.commandRegistry = new CommandRegistry();
+    this.commandParser = new CommandParser();
+    registerAllCommands(this.commandRegistry);
+
+    logger.info({ commandCount: this.commandRegistry.getCount() }, 'Command system initialized');
   }
 
   /**
@@ -64,10 +81,18 @@ export class DistributedWorldManager {
     // Subscribe to zone input messages
     await this.subscribeToZoneMessages();
 
+    // Initialize command executor (needs Redis from MessageBus)
+    this.commandExecutor = new CommandExecutor(
+      this.commandRegistry,
+      this.commandParser,
+      this.messageBus.getRedisClient()
+    );
+
     logger.info(
       {
         zoneCount: this.zones.size,
         npcCount: this.npcControllers.size,
+        commandCount: this.commandRegistry.getCount(),
       },
       'Distributed world manager initialized'
     );
@@ -116,6 +141,21 @@ export class DistributedWorldManager {
       case MessageType.PLAYER_CHAT:
         this.handlePlayerChat(message);
         break;
+      case MessageType.PLAYER_COMMAND:
+        this.handlePlayerCommand(message);
+        break;
+      case MessageType.PLAYER_PROXIMITY_REFRESH:
+        this.handlePlayerProximityRefresh(message);
+        break;
+      case MessageType.NPC_INHABIT:
+        this.handleNpcInhabit(message);
+        break;
+      case MessageType.NPC_RELEASE:
+        this.handleNpcRelease(message);
+        break;
+      case MessageType.NPC_CHAT:
+        this.handleNpcChat(message);
+        break;
       default:
         logger.warn({ type: message.type }, 'Unhandled message type');
     }
@@ -125,7 +165,11 @@ export class DistributedWorldManager {
    * Handle player joining a zone
    */
   private async handlePlayerJoinZone(message: MessageEnvelope): Promise<void> {
-    const { character, socketId } = message.payload as { character: Character; socketId: string };
+    const { character, socketId, isMachine } = message.payload as {
+      character: Character;
+      socketId: string;
+      isMachine?: boolean;
+    };
     const zoneManager = this.zones.get(character.zoneId);
 
     if (!zoneManager) {
@@ -133,14 +177,14 @@ export class DistributedWorldManager {
       return;
     }
 
-    zoneManager.addPlayer(character, socketId);
+    zoneManager.addPlayer(character, socketId, isMachine ?? false);
     this.characterToZone.set(character.id, character.zoneId);
 
     // Update player location in registry
     await this.zoneRegistry.updatePlayerLocation(character.id, character.zoneId, socketId);
 
     // Calculate and send proximity roster
-    await this.sendProximityRosterToPlayer(character.id);
+    await this.sendProximityRosterToEntity(character.id);
 
     // Broadcast proximity updates to nearby players
     await this.broadcastNearbyUpdate(character.zoneId);
@@ -189,7 +233,7 @@ export class DistributedWorldManager {
     zoneManager.updatePlayerPosition(characterId, position);
 
     // Send updated proximity roster to the player
-    await this.sendProximityRosterToPlayer(characterId);
+    await this.sendProximityRosterToEntity(characterId);
 
     // Broadcast to nearby players
     await this.broadcastNearbyUpdate(zoneId);
@@ -237,6 +281,7 @@ export class DistributedWorldManager {
 
     // Get nearby player socket IDs
     const nearbySocketIds = zoneManager.getPlayerSocketIdsInRange(senderPosition, range, characterId);
+    const nearbyCompanionSocketIds = zoneManager.getCompanionSocketIdsInRange(senderPosition, range, characterId);
 
     // Format message based on channel
     let formattedMessage = text;
@@ -267,6 +312,28 @@ export class DistributedWorldManager {
       });
     }
 
+    for (const socketId of nearbyCompanionSocketIds) {
+      const clientMessage: ClientMessagePayload = {
+        socketId,
+        event: 'chat',
+        data: {
+          channel,
+          sender: sender.name,
+          senderId: characterId,
+          message: formattedMessage,
+          timestamp: Date.now(),
+        },
+      };
+
+      await this.messageBus.publish('gateway:output', {
+        type: MessageType.CLIENT_MESSAGE,
+        characterId: '',
+        socketId,
+        payload: clientMessage,
+        timestamp: Date.now(),
+      });
+    }
+
     // Track message for NPC AI context
     this.trackChatMessage(zoneId, sender.name, channel, formattedMessage);
 
@@ -274,6 +341,404 @@ export class DistributedWorldManager {
     await this.triggerNPCResponses(zoneId, senderPosition, range);
 
     logger.debug({ characterId, channel, recipientCount: nearbySocketIds.length }, 'Chat message broadcast');
+  }
+
+  private async handlePlayerCommand(message: MessageEnvelope): Promise<void> {
+    const { characterId, zoneId, command } = message.payload as {
+      characterId: string;
+      zoneId: string;
+      command: string;
+    };
+
+    if (!this.commandExecutor) {
+      logger.warn('Command executor not initialized');
+      return;
+    }
+
+    const zoneManager = this.zones.get(zoneId);
+    if (!zoneManager) return;
+
+    const entity = zoneManager.getEntity(characterId);
+    if (!entity || !entity.socketId) {
+      logger.warn({ characterId, zoneId }, 'Command sender not found in zone');
+      return;
+    }
+
+    const character = await CharacterService.findById(characterId);
+    if (!character) {
+      logger.warn({ characterId }, 'Command sender not found in database');
+      return;
+    }
+
+    const context: CommandContext = {
+      characterId,
+      characterName: character.name,
+      accountId: character.accountId,
+      zoneId,
+      position: entity.position,
+      heading: character.heading,
+      inCombat: entity.inCombat || false,
+      socketId: entity.socketId,
+    };
+
+    const result = await this.commandExecutor.execute(command, context);
+    const processed = await this.processCommandResult(result, context, zoneManager);
+
+    await this.sendCommandResponse(context.socketId, command, processed);
+  }
+
+  private async processCommandResult(
+    result: { success: boolean; message?: string; error?: string; data?: any; events?: CommandEvent[] },
+    context: CommandContext,
+    zoneManager: ZoneManager
+  ): Promise<{ success: boolean; message?: string; error?: string; data?: any }> {
+    if (!result.success || !result.events || result.events.length === 0) {
+      return {
+        success: result.success,
+        message: result.message,
+        error: result.error,
+        data: result.data,
+      };
+    }
+
+    for (const event of result.events) {
+      switch (event.type) {
+        case 'speech': {
+          const { channel, message, range, position } = event.data as {
+            channel: 'say' | 'shout' | 'emote' | 'cfh' | 'touch';
+            message: string;
+            range: number;
+            position: { x: number; y: number; z: number };
+          };
+
+          const rangeMeters = range * FEET_TO_METERS;
+          await this.broadcastChatFromCharacter(
+            zoneManager,
+            context.characterId,
+            context.characterName,
+            position,
+            channel,
+            message,
+            rangeMeters
+          );
+          break;
+        }
+        case 'emote': {
+          const { action, position, range } = event.data as {
+            action: string;
+            position: { x: number; y: number; z: number };
+            range: number;
+          };
+
+          const rangeMeters = range * FEET_TO_METERS;
+          const messageText = `${context.characterName} ${action}`;
+
+          await this.broadcastChatFromCharacter(
+            zoneManager,
+            context.characterId,
+            context.characterName,
+            position,
+            'emote',
+            messageText,
+            rangeMeters
+          );
+          break;
+        }
+        case 'private_message': {
+          const { targetName, message } = event.data as {
+            targetName: string;
+            message: string;
+          };
+
+          const sent = await this.sendPrivateMessage(
+            context.characterId,
+            context.characterName,
+            targetName,
+            message
+          );
+
+          if (!sent) {
+            return {
+              success: false,
+              error: `Player '${targetName}' is not available.`,
+            };
+          }
+          break;
+        }
+        default:
+          return {
+            success: false,
+            error: `Command event '${event.type}' is not supported yet.`,
+          };
+      }
+    }
+
+    return {
+      success: result.success,
+      message: result.message,
+      error: result.error,
+      data: result.data,
+    };
+  }
+
+  private async broadcastChatFromCharacter(
+    zoneManager: ZoneManager,
+    characterId: string,
+    characterName: string,
+    position: { x: number; y: number; z: number },
+    channel: 'say' | 'shout' | 'emote' | 'cfh' | 'touch',
+    message: string,
+    rangeMeters: number
+  ): Promise<void> {
+    const nearbySocketIds = zoneManager.getPlayerSocketIdsInRange(position, rangeMeters, characterId);
+    const nearbyCompanionSocketIds = zoneManager.getCompanionSocketIdsInRange(position, rangeMeters, characterId);
+
+    for (const socketId of nearbySocketIds) {
+      await this.messageBus.publish('gateway:output', {
+        type: MessageType.CLIENT_MESSAGE,
+        characterId: '',
+        socketId,
+        payload: {
+          socketId,
+          event: 'chat',
+          data: {
+            channel,
+            sender: characterName,
+            senderId: characterId,
+            message,
+            timestamp: Date.now(),
+          },
+        },
+        timestamp: Date.now(),
+      });
+    }
+
+    for (const socketId of nearbyCompanionSocketIds) {
+      await this.messageBus.publish('gateway:output', {
+        type: MessageType.CLIENT_MESSAGE,
+        characterId: '',
+        socketId,
+        payload: {
+          socketId,
+          event: 'chat',
+          data: {
+            channel,
+            sender: characterName,
+            senderId: characterId,
+            message,
+            timestamp: Date.now(),
+          },
+        },
+        timestamp: Date.now(),
+      });
+    }
+
+    this.trackChatMessage(zoneManager.getZone().id, characterName, channel, message);
+    await this.triggerNPCResponses(zoneManager.getZone().id, position, rangeMeters);
+  }
+
+  private async sendPrivateMessage(
+    senderId: string,
+    senderName: string,
+    targetName: string,
+    message: string
+  ): Promise<boolean> {
+    const target = await CharacterService.findByName(targetName);
+    if (!target) return false;
+
+    const location = await this.zoneRegistry.getPlayerLocation(target.id);
+    if (!location) return false;
+
+    await this.messageBus.publish('gateway:output', {
+      type: MessageType.CLIENT_MESSAGE,
+      characterId: target.id,
+      socketId: location.socketId,
+      payload: {
+        socketId: location.socketId,
+        event: 'chat',
+        data: {
+          channel: 'whisper',
+          sender: senderName,
+          senderId,
+          message,
+          timestamp: Date.now(),
+        },
+      },
+      timestamp: Date.now(),
+    });
+
+    return true;
+  }
+
+  private async sendCommandResponse(
+    socketId: string,
+    command: string,
+    response: { success: boolean; message?: string; error?: string; data?: any }
+  ): Promise<void> {
+    await this.messageBus.publish('gateway:output', {
+      type: MessageType.CLIENT_MESSAGE,
+      socketId,
+      payload: {
+        socketId,
+        event: 'command_response',
+        data: {
+          success: response.success,
+          command,
+          message: response.message,
+          error: response.error,
+          data: response.data,
+          timestamp: Date.now(),
+        },
+      },
+      timestamp: Date.now(),
+    });
+  }
+
+  private async handleNpcInhabit(message: MessageEnvelope): Promise<void> {
+    const { companionId, zoneId, socketId } = message.payload as {
+      companionId: string;
+      zoneId: string;
+      socketId: string;
+    };
+
+    const zoneManager = this.zones.get(zoneId);
+    if (!zoneManager) {
+      logger.warn({ companionId, zoneId }, 'Cannot inhabit NPC - zone not managed');
+      return;
+    }
+
+    zoneManager.setCompanionSocketId(companionId, socketId);
+    this.companionToZone.set(companionId, zoneId);
+
+    this.previousRosters.delete(companionId);
+    await this.sendProximityRosterToEntity(companionId);
+  }
+
+  private async handleNpcRelease(message: MessageEnvelope): Promise<void> {
+    const { companionId, zoneId } = message.payload as {
+      companionId: string;
+      zoneId: string;
+    };
+
+    const zoneManager = this.zones.get(zoneId);
+    if (!zoneManager) return;
+
+    zoneManager.setCompanionSocketId(companionId, null);
+    this.companionToZone.delete(companionId);
+    this.previousRosters.delete(companionId);
+  }
+
+  private async handleNpcChat(message: MessageEnvelope): Promise<void> {
+    const { companionId, zoneId, channel, text } = message.payload as {
+      companionId: string;
+      zoneId: string;
+      channel: 'say' | 'shout' | 'emote' | 'cfh' | 'touch';
+      text: string;
+    };
+
+    const zoneManager = this.zones.get(zoneId);
+    if (!zoneManager) return;
+
+    const { CompanionService } = await import('@/database');
+    const companion = await CompanionService.findById(companionId);
+    if (!companion) {
+      logger.warn({ companionId }, 'Companion not found for NPC chat');
+      return;
+    }
+
+    const ranges = {
+      touch: 1.524,
+      say: 6.096,
+      shout: 45.72,
+      emote: 45.72,
+      cfh: 76.2,
+    };
+
+    const range = ranges[channel];
+    const speakerPosition = {
+      x: companion.positionX,
+      y: companion.positionY,
+      z: companion.positionZ,
+    };
+
+    const nearbyPlayerSocketIds = zoneManager.getPlayerSocketIdsInRange(
+      speakerPosition,
+      range,
+      companionId
+    );
+    const nearbyCompanionSocketIds = zoneManager.getCompanionSocketIdsInRange(
+      speakerPosition,
+      range,
+      companionId
+    );
+
+    let formattedMessage = text;
+    if (channel === 'emote') {
+      formattedMessage = `${companion.name} ${text}`;
+    }
+
+    for (const socketId of nearbyPlayerSocketIds) {
+      const clientMessage: ClientMessagePayload = {
+        socketId,
+        event: 'chat',
+        data: {
+          channel,
+          sender: companion.name,
+          senderId: companionId,
+          message: formattedMessage,
+          timestamp: Date.now(),
+        },
+      };
+
+      await this.messageBus.publish('gateway:output', {
+        type: MessageType.CLIENT_MESSAGE,
+        characterId: '',
+        socketId,
+        payload: clientMessage,
+        timestamp: Date.now(),
+      });
+    }
+
+    for (const socketId of nearbyCompanionSocketIds) {
+      const clientMessage: ClientMessagePayload = {
+        socketId,
+        event: 'chat',
+        data: {
+          channel,
+          sender: companion.name,
+          senderId: companionId,
+          message: formattedMessage,
+          timestamp: Date.now(),
+        },
+      };
+
+      await this.messageBus.publish('gateway:output', {
+        type: MessageType.CLIENT_MESSAGE,
+        characterId: '',
+        socketId,
+        payload: clientMessage,
+        timestamp: Date.now(),
+      });
+    }
+  }
+
+  /**
+   * Handle a player-requested proximity roster refresh
+   */
+  private async handlePlayerProximityRefresh(message: MessageEnvelope): Promise<void> {
+    const { characterId, zoneId } = message.payload as {
+      characterId: string;
+      zoneId: string;
+    };
+
+    const zoneManager = this.zones.get(zoneId);
+    if (!zoneManager) return;
+
+    // Clear previous roster so next send includes full data as delta.
+    this.previousRosters.delete(characterId);
+
+    await this.sendProximityRosterToEntity(characterId);
+    logger.debug({ characterId, zoneId }, 'Proximity roster refresh sent');
   }
 
   /**
@@ -315,6 +780,9 @@ export class DistributedWorldManager {
 
     // Trigger AI response for each nearby NPC
     for (const companion of nearbyNPCs) {
+      if (this.companionToZone.has(companion.id)) {
+        continue;
+      }
       const controller = this.npcControllers.get(companion.id);
       if (!controller) continue;
 
@@ -436,18 +904,18 @@ export class DistributedWorldManager {
   /**
    * Send proximity roster delta to a specific player (only if changed)
    */
-  private async sendProximityRosterToPlayer(characterId: string): Promise<void> {
-    const zoneId = this.characterToZone.get(characterId);
+  private async sendProximityRosterToEntity(entityId: string): Promise<void> {
+    const zoneId = this.characterToZone.get(entityId) || this.companionToZone.get(entityId);
     if (!zoneId) return;
 
     const zoneManager = this.zones.get(zoneId);
     if (!zoneManager) return;
 
     // Get previous roster for delta calculation
-    const previousRoster = this.previousRosters.get(characterId);
+    const previousRoster = this.previousRosters.get(entityId);
 
     // Calculate delta
-    const result = zoneManager.calculateProximityRosterDelta(characterId, previousRoster);
+    const result = zoneManager.calculateProximityRosterDelta(entityId, previousRoster);
 
     // If result is null, roster hasn't changed - don't send
     if (!result) {
@@ -457,9 +925,9 @@ export class DistributedWorldManager {
     const { delta, roster } = result;
 
     // Store new roster for next delta calculation
-    this.previousRosters.set(characterId, roster);
+    this.previousRosters.set(entityId, roster);
 
-    const socketId = zoneManager.getSocketIdForCharacter(characterId);
+    const socketId = zoneManager.getSocketIdForEntity(entityId);
     if (!socketId) return;
 
     // Publish delta message to Gateway
@@ -474,7 +942,7 @@ export class DistributedWorldManager {
 
     await this.messageBus.publish('gateway:output', {
       type: MessageType.CLIENT_MESSAGE,
-      characterId,
+      characterId: entityId,
       socketId,
       payload: clientMessage,
       timestamp: Date.now(),
@@ -491,7 +959,13 @@ export class DistributedWorldManager {
     // Send updated rosters to all players in the zone
     for (const [characterId, charZoneId] of this.characterToZone.entries()) {
       if (charZoneId === zoneId) {
-        await this.sendProximityRosterToPlayer(characterId);
+        await this.sendProximityRosterToEntity(characterId);
+      }
+    }
+
+    for (const [companionId, compZoneId] of this.companionToZone.entries()) {
+      if (compZoneId === zoneId) {
+        await this.sendProximityRosterToEntity(companionId);
       }
     }
   }
@@ -499,7 +973,7 @@ export class DistributedWorldManager {
   /**
    * Add a player to a zone (called from Gateway via message bus)
    */
-  async addPlayerToZone(character: Character, socketId: string): Promise<void> {
+  async addPlayerToZone(character: Character, socketId: string, isMachine: boolean = false): Promise<void> {
     // Publish to the zone's input channel
     const channel = `zone:${character.zoneId}:input`;
 
@@ -508,7 +982,7 @@ export class DistributedWorldManager {
       zoneId: character.zoneId,
       characterId: character.id,
       socketId,
-      payload: { character, socketId },
+      payload: { character, socketId, isMachine },
       timestamp: Date.now(),
     });
   }
@@ -613,5 +1087,6 @@ export class DistributedWorldManager {
 
     this.zones.clear();
     this.characterToZone.clear();
+    this.companionToZone.clear();
   }
 }

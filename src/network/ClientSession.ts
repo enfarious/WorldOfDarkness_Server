@@ -22,6 +22,7 @@ interface ClientInfo {
   type: ClientType;
   version: string;
   capabilities: ClientCapabilities;
+  isMachine: boolean;
 }
 
 /**
@@ -331,7 +332,11 @@ export class ClientSession {
 
     // Register player with WorldManager
     this.currentZoneId = zone.id;
-    await this.worldManager.addPlayerToZone(character, this.socket.id);
+    await this.worldManager.addPlayerToZone(
+      character,
+      this.socket.id,
+      this.clientInfo?.isMachine === true
+    );
   }
 
   private async handleMovement(data: MoveMessage['payload']): Promise<void> {

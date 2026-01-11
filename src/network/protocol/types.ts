@@ -31,6 +31,7 @@ export interface HandshakeMessage {
     clientType: ClientType;
     clientVersion: string;
     capabilities: ClientCapabilities;
+    isMachine?: boolean; // true for AI-controlled clients (airlock, bots)
   };
 }
 
@@ -48,7 +49,7 @@ export interface HandshakeAckMessage {
 
 // ========== Authentication ==========
 
-export type AuthMethod = 'guest' | 'credentials' | 'token';
+export type AuthMethod = 'guest' | 'credentials' | 'token' | 'airlock';
 
 export interface AuthMessage {
   type: 'auth';
@@ -58,6 +59,13 @@ export interface AuthMessage {
     username?: string;
     password?: string;
     token?: string;
+    airlockKey?: string;
+    airlockId?: string;
+    clientVersion?: string;
+    capabilities?: {
+      llm?: boolean;
+      multiSession?: boolean;
+    };
   };
 }
 
@@ -77,6 +85,10 @@ export interface AuthSuccessMessage {
     characters: CharacterInfo[];
     canCreateCharacter: boolean;
     maxCharacters: number;
+    airlockSessionId?: string;
+    expiresAt?: number;
+    canInhabit?: boolean;
+    maxConcurrentInhabits?: number;
   };
 }
 
@@ -326,6 +338,83 @@ export interface CombatActionMessage {
   };
 }
 
+export interface CommandMessage {
+  type: 'command';
+  payload: {
+    command: string;
+    timestamp: number;
+  };
+}
+
+export interface InhabitRequestMessage {
+  type: 'inhabit_request';
+  payload: {
+    airlockSessionId: string;
+    npcId?: string;
+    npcTag?: string;
+    intent?: string;
+    ttlMs?: number;
+  };
+}
+
+export interface InhabitGrantedMessage {
+  type: 'inhabit_granted';
+  payload: {
+    inhabitId: string;
+    npcId: string;
+    displayName: string;
+    zoneId: string;
+    expiresAt: number;
+  };
+}
+
+export interface InhabitDeniedMessage {
+  type: 'inhabit_denied';
+  payload: {
+    reason: string;
+  };
+}
+
+export interface InhabitReleaseMessage {
+  type: 'inhabit_release';
+  payload: {
+    inhabitId: string;
+    reason?: string;
+  };
+}
+
+export interface InhabitPingMessage {
+  type: 'inhabit_ping';
+  payload: {
+    inhabitId: string;
+  };
+}
+
+export interface InhabitRevokedMessage {
+  type: 'inhabit_revoked';
+  payload: {
+    inhabitId: string;
+    reason: string;
+  };
+}
+
+export interface InhabitChatMessage {
+  type: 'inhabit_chat';
+  payload: {
+    inhabitId: string;
+    channel: CommunicationChannel;
+    message: string;
+    timestamp: number;
+  };
+}
+
+export interface ProximityRefreshMessage {
+  type: 'proximity_refresh';
+  payload: {
+    timestamp: number;
+  };
+}
+
 // ========== Events ==========
 
 export interface VisualEffect {
@@ -464,6 +553,7 @@ export interface ProximityEntity {
   id: string;
   name: string;
   type: 'player' | 'npc' | 'companion';
+  isMachine: boolean;  // true = AI/NPC, false = human player
   bearing: number;     // 0-360 degrees (0=North, 90=East, 180=South, 270=West)
   elevation: number;   // -90 to 90 degrees (negative=down, positive=up)
   range: number;       // Distance in feet
@@ -582,6 +672,12 @@ export type ClientMessage =
   | ChatMessage
   | InteractMessage
   | CombatActionMessage
+  | CommandMessage
+  | InhabitRequestMessage
+  | InhabitReleaseMessage
+  | InhabitPingMessage
+  | InhabitChatMessage
+  | ProximityRefreshMessage
   | PingMessage
   | DisconnectMessage
   | PlayerPeekRequest;
@@ -598,4 +694,7 @@ export type ServerMessage =
   | ProximityRosterMessage
   | ProximityRosterDeltaMessage
   | CommunicationReceived
-  | PlayerPeekResponse;
+  | PlayerPeekResponse
+  | InhabitGrantedMessage
+  | InhabitDeniedMessage
+  | InhabitRevokedMessage;

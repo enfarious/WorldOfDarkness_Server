@@ -1,8 +1,9 @@
 import { Socket } from 'socket.io';
 import { logger } from '@/utils/logger';
-import { AccountService, CharacterService, ZoneService } from '@/database';
+import { AccountService, CharacterService, CompanionService, ZoneService } from '@/database';
 import { StatCalculator } from '@/game/stats/StatCalculator';
 import { MessageBus, MessageType, ZoneRegistry } from '@/messaging';
+import { randomUUID } from 'crypto';
 import {
   ClientType,
   ClientCapabilities,
@@ -22,6 +23,7 @@ interface ClientInfo {
   type: ClientType;
   version: string;
   capabilities: ClientCapabilities;
+  isMachine: boolean;
 }
 
 /**
@@ -31,7 +33,12 @@ interface ClientInfo {
  * Routes game messages (movement, chat, etc.) to Zone servers via Redis
  */
 export class GatewayClientSession {
+  private readonly PROTOCOL_VERSION = '1.0.0';
   private authenticated: boolean = false;
+  private isAirlock: boolean = false;
+  private airlockSessionId: string | null = null;
+  private airlockId: string | null = null;
+  private maxConcurrentInhabits: number = 0;
   private characterId: string | null = null;
   private accountId: string | null = null;
   private currentZoneId: string | null = null;
@@ -49,15 +56,23 @@ export class GatewayClientSession {
   private setupMessageHandlers(): void {
     // Handshake
     this.socket.on('handshake', (data) => {
+      const compatible = this.isProtocolCompatible(data.protocolVersion);
+      if (!compatible && process.env.NODE_ENV !== 'production') {
+        logger.warn(
+          `Dev mode: accepting protocol ${data.protocolVersion} (server ${this.PROTOCOL_VERSION})`
+        );
+      }
+
       this.setClientInfo({
         type: data.clientType,
         version: data.clientVersion,
         capabilities: data.capabilities,
+        isMachine: data.isMachine === true,
       });
 
       this.socket.emit('handshake_ack', {
-        protocolVersion: '1.0.0',
-        compatible: data.protocolVersion === '1.0.0',
+        protocolVersion: this.PROTOCOL_VERSION,
+        compatible,
         serverCapabilities: {
           maxPlayers: 10000,
           features: ['proximity_roster', 'movement', 'chat', 'combat'],
@@ -72,6 +87,10 @@ export class GatewayClientSession {
 
     // Character selection/creation
     this.socket.on('character_select', (data: CharacterSelectMessage['payload']) => {
+      if (this.isAirlock) {
+        this.sendError('AIRLOCK_SESSION', 'Airlock sessions cannot select characters');
+        return;
+      }
       if (!this.authenticated) {
         this.sendError('NOT_AUTHENTICATED', 'Must authenticate before selecting character');
         return;
@@ -80,6 +99,10 @@ export class GatewayClientSession {
     });
 
     this.socket.on('character_create', (data: CharacterCreateMessage['payload']) => {
+      if (this.isAirlock) {
+        this.sendError('AIRLOCK_SESSION', 'Airlock sessions cannot create characters');
+        return;
+      }
       if (!this.authenticated) {
         this.sendError('NOT_AUTHENTICATED', 'Must authenticate before creating character');
         return;
@@ -89,23 +112,98 @@ export class GatewayClientSession {
 
     // Game messages - route to Zone server
     this.socket.on('move', async (data: MoveMessage['payload']) => {
-      if (!this.characterId || !this.currentZoneId) return;
-      await this.routeToZone('move', data);
+      if (!this.characterId || !this.currentZoneId) {
+        this.sendDevAck('move', false, 'not_in_world');
+        return;
+      }
+      const routed = await this.routeToZone('move', data);
+      this.sendDevAck('move', routed, routed ? undefined : 'not_routed');
     });
 
     this.socket.on('chat', async (data: ChatMessage['payload']) => {
-      if (!this.characterId || !this.currentZoneId) return;
-      await this.routeToZone('chat', data);
+      if (!this.characterId || !this.currentZoneId) {
+        this.sendDevAck('chat', false, 'not_in_world');
+        return;
+      }
+      const message = (data.message || '').trim();
+      if (message.startsWith('/')) {
+        const routed = await this.routeCommandToZone(message);
+        this.sendDevAck('command', routed, routed ? undefined : 'not_routed');
+        return;
+      }
+
+      const routed = await this.routeToZone('chat', data);
+      this.sendDevAck('chat', routed, routed ? undefined : 'not_routed');
     });
 
     this.socket.on('combat_action', async (data: CombatActionMessage['payload']) => {
-      if (!this.characterId || !this.currentZoneId) return;
-      await this.routeToZone('combat_action', data);
+      if (!this.characterId || !this.currentZoneId) {
+        this.sendDevAck('combat_action', false, 'not_in_world');
+        return;
+      }
+      const routed = await this.routeToZone('combat_action', data);
+      this.sendDevAck('combat_action', routed, routed ? undefined : 'not_routed');
     });
 
     this.socket.on('interact', async (data: InteractMessage['payload']) => {
-      if (!this.characterId || !this.currentZoneId) return;
-      await this.routeToZone('interact', data);
+      if (!this.characterId || !this.currentZoneId) {
+        this.sendDevAck('interact', false, 'not_in_world');
+        return;
+      }
+      const routed = await this.routeToZone('interact', data);
+      this.sendDevAck('interact', routed, routed ? undefined : 'not_routed');
+    });
+
+    this.socket.on('command', async (data: { command?: string } | string) => {
+      if (!this.characterId || !this.currentZoneId) {
+        this.sendDevAck('command', false, 'not_in_world');
+        return;
+      }
+
+      const rawCommand = typeof data === 'string' ? data : data.command;
+      if (!rawCommand || !rawCommand.trim()) {
+        this.sendDevAck('command', false, 'empty_command');
+        return;
+      }
+
+      const routed = await this.routeCommandToZone(rawCommand);
+      this.sendDevAck('command', routed, routed ? undefined : 'not_routed');
+    });
+
+    // Airlock controls
+    this.socket.on('inhabit_request', async (data) => {
+      await this.handleInhabitRequest(data);
+    });
+
+    this.socket.on('inhabit_release', async (data) => {
+      await this.handleInhabitRelease(data);
+    });
+
+    this.socket.on('inhabit_ping', async (data) => {
+      await this.handleInhabitPing(data);
+    });
+
+    this.socket.on('inhabit_chat', async (data) => {
+      await this.handleInhabitChat(data);
+    });
+
+    this.socket.on('proximity_refresh', async () => {
+      if (!this.characterId || !this.currentZoneId) {
+        this.sendDevAck('proximity_refresh', false, 'not_in_world');
+        return;
+      }
+
+      const channel = `zone:${this.currentZoneId}:input`;
+      await this.messageBus.publish(channel, {
+        type: MessageType.PLAYER_PROXIMITY_REFRESH,
+        zoneId: this.currentZoneId,
+        characterId: this.characterId,
+        socketId: this.socket.id,
+        payload: { characterId: this.characterId, zoneId: this.currentZoneId },
+        timestamp: Date.now(),
+      });
+
+      this.sendDevAck('proximity_refresh', true);
     });
 
     // Ping/pong
@@ -121,8 +219,8 @@ export class GatewayClientSession {
   /**
    * Route a game message to the appropriate Zone server
    */
-  private async routeToZone(event: string, data: unknown): Promise<void> {
-    if (!this.currentZoneId || !this.characterId) return;
+  private async routeToZone(event: string, data: unknown): Promise<boolean> {
+    if (!this.currentZoneId || !this.characterId) return false;
 
     const channel = `zone:${this.currentZoneId}:input`;
 
@@ -134,7 +232,8 @@ export class GatewayClientSession {
 
         if (!moveData.position) {
           logger.warn({ characterId: this.characterId }, 'Movement request missing position');
-          return;
+          this.sendDevAck('move', false, 'missing_position');
+          return false;
         }
 
         // Update position in database
@@ -179,7 +278,31 @@ export class GatewayClientSession {
 
       default:
         logger.warn({ event }, 'Unhandled game event for routing');
+        return false;
     }
+
+    return true;
+  }
+
+  private async routeCommandToZone(rawCommand: string): Promise<boolean> {
+    if (!this.currentZoneId || !this.characterId) return false;
+
+    const channel = `zone:${this.currentZoneId}:input`;
+    await this.messageBus.publish(channel, {
+      type: MessageType.PLAYER_COMMAND,
+      zoneId: this.currentZoneId,
+      characterId: this.characterId,
+      socketId: this.socket.id,
+      payload: {
+        characterId: this.characterId,
+        zoneId: this.currentZoneId,
+        command: rawCommand,
+        socketId: this.socket.id,
+      },
+      timestamp: Date.now(),
+    });
+
+    return true;
   }
 
   setClientInfo(info: ClientInfo): void {
@@ -204,6 +327,9 @@ export class GatewayClientSession {
           break;
         case 'token':
           await this.authenticateToken(data.token!);
+          break;
+        case 'airlock':
+          await this.authenticateAirlock(data);
           break;
         default:
           throw new Error('Invalid authentication method');
@@ -274,6 +400,53 @@ export class GatewayClientSession {
   private async authenticateToken(_token: string): Promise<void> {
     logger.warn('Token authentication not fully implemented');
     throw new Error('Token authentication not yet implemented');
+  }
+
+  private async authenticateAirlock(data: AuthMessage['payload']): Promise<void> {
+    const airlockKey = data.airlockKey || '';
+    const airlockId = data.airlockId || 'airlock';
+    const sharedSecret = process.env.AIRLOCK_SHARED_SECRET || '';
+
+    if (!sharedSecret || airlockKey !== sharedSecret) {
+      throw new Error('Invalid airlock key');
+    }
+
+    const sessionId = randomUUID();
+    const sessionTtlMs = Number.parseInt(
+      process.env.AIRLOCK_SESSION_TTL_MS || `${12 * 60 * 60 * 1000}`,
+      10
+    );
+
+    const expiresAt = Date.now() + sessionTtlMs;
+    const maxConcurrent = Number.parseInt(process.env.AIRLOCK_MAX_CONCURRENT || '5', 10);
+
+    const redis = this.messageBus.getRedisClient();
+    await redis.hSet(`airlock:session:${sessionId}`, {
+      airlockId,
+      expiresAt: `${expiresAt}`,
+    });
+    await redis.pExpire(`airlock:session:${sessionId}`, sessionTtlMs);
+
+    this.isAirlock = true;
+    this.airlockSessionId = sessionId;
+    this.airlockId = airlockId;
+    this.maxConcurrentInhabits = maxConcurrent;
+    this.authenticated = true;
+
+    const response: AuthSuccessMessage['payload'] = {
+      accountId: '',
+      token: 'airlock-session',
+      characters: [],
+      canCreateCharacter: false,
+      maxCharacters: 0,
+      airlockSessionId: sessionId,
+      expiresAt,
+      canInhabit: true,
+      maxConcurrentInhabits: maxConcurrent,
+    };
+
+    this.socket.emit('auth_success', response);
+    logger.info(`Airlock authenticated: ${this.socket.id} as ${airlockId}`);
   }
 
   private async handleCharacterSelect(data: CharacterSelectMessage['payload']): Promise<void> {
@@ -409,7 +582,11 @@ export class GatewayClientSession {
       zoneId: zone.id,
       characterId: character.id,
       socketId: this.socket.id,
-      payload: { character, socketId: this.socket.id },
+      payload: {
+        character,
+        socketId: this.socket.id,
+        isMachine: this.clientInfo?.isMachine === true,
+      },
       timestamp: Date.now(),
     });
   }
@@ -438,11 +615,189 @@ export class GatewayClientSession {
     });
   }
 
+  private async handleInhabitRequest(data: {
+    airlockSessionId?: string;
+    npcId?: string;
+    npcTag?: string;
+    ttlMs?: number;
+  }): Promise<void> {
+    if (!this.isAirlock || !this.airlockSessionId || !this.airlockId) {
+      this.socket.emit('inhabit_denied', { reason: 'not_authorized' });
+      return;
+    }
+
+    if (data.airlockSessionId !== this.airlockSessionId) {
+      this.socket.emit('inhabit_denied', { reason: 'not_authorized' });
+      return;
+    }
+
+    const redis = this.messageBus.getRedisClient();
+    const sessionSetKey = `airlock:session:${this.airlockSessionId}:inhabits`;
+    const activeCount = await redis.sCard(sessionSetKey);
+
+    if (activeCount >= this.maxConcurrentInhabits) {
+      this.socket.emit('inhabit_denied', { reason: 'limit_reached' });
+      return;
+    }
+
+    let companion = null;
+    if (data.npcId) {
+      companion = await CompanionService.findById(data.npcId);
+    } else if (data.npcTag) {
+      const candidates = await CompanionService.findByTag(data.npcTag);
+      for (const candidate of candidates) {
+        const occupied = await redis.get(`airlock:npc:${candidate.id}`);
+        if (!occupied) {
+          companion = candidate;
+          break;
+        }
+      }
+    }
+
+    if (!companion) {
+      this.socket.emit('inhabit_denied', { reason: 'npc_unavailable' });
+      return;
+    }
+
+    if (companion.possessedAirlockId && companion.possessedAirlockId !== this.airlockId) {
+      this.socket.emit('inhabit_denied', { reason: 'not_authorized' });
+      return;
+    }
+
+    const defaultTtlMs = Number.parseInt(
+      process.env.AIRLOCK_INHABIT_TTL_MS || '300000',
+      10
+    );
+    const maxTtlMs = Number.parseInt(
+      process.env.AIRLOCK_INHABIT_MAX_TTL_MS || `${30 * 60 * 1000}`,
+      10
+    );
+    const ttlMs = Math.min(data.ttlMs || defaultTtlMs, maxTtlMs);
+
+    const inhabitId = randomUUID();
+    const npcKey = `airlock:npc:${companion.id}`;
+    const setResult = await redis.set(npcKey, inhabitId, {
+      PX: ttlMs,
+      NX: true,
+    });
+
+    if (!setResult) {
+      this.socket.emit('inhabit_denied', { reason: 'npc_unavailable' });
+      return;
+    }
+
+    const expiresAt = Date.now() + ttlMs;
+    const inhabitKey = `airlock:inhabit:${inhabitId}`;
+    await redis.hSet(inhabitKey, {
+      airlockSessionId: this.airlockSessionId,
+      airlockId: this.airlockId,
+      npcId: companion.id,
+      zoneId: companion.zoneId,
+      expiresAt: `${expiresAt}`,
+      ttlMs: `${ttlMs}`,
+    });
+    await redis.pExpire(inhabitKey, ttlMs);
+    await redis.sAdd(sessionSetKey, inhabitId);
+    await redis.pExpire(sessionSetKey, Number.parseInt(process.env.AIRLOCK_SESSION_TTL_MS || `${12 * 60 * 60 * 1000}`, 10));
+
+    const channel = `zone:${companion.zoneId}:input`;
+    await this.messageBus.publish(channel, {
+      type: MessageType.NPC_INHABIT,
+      zoneId: companion.zoneId,
+      socketId: this.socket.id,
+      payload: {
+        companionId: companion.id,
+        zoneId: companion.zoneId,
+        socketId: this.socket.id,
+      },
+      timestamp: Date.now(),
+    });
+
+    this.socket.emit('inhabit_granted', {
+      inhabitId,
+      npcId: companion.id,
+      displayName: companion.name,
+      zoneId: companion.zoneId,
+      expiresAt,
+    });
+  }
+
+  private async handleInhabitRelease(data: { inhabitId?: string; reason?: string }): Promise<void> {
+    if (!data.inhabitId) return;
+    await this.releaseInhabit(data.inhabitId, data.reason || 'session_end', true);
+  }
+
+  private async handleInhabitPing(data: { inhabitId?: string }): Promise<void> {
+    if (!this.isAirlock || !this.airlockSessionId || !data.inhabitId) return;
+
+    const redis = this.messageBus.getRedisClient();
+    const inhabitKey = `airlock:inhabit:${data.inhabitId}`;
+    const result = await redis.hGetAll(inhabitKey);
+
+    if (!result.airlockSessionId || result.airlockSessionId !== this.airlockSessionId) {
+      this.socket.emit('inhabit_revoked', { inhabitId: data.inhabitId, reason: 'not_authorized' });
+      return;
+    }
+
+    const ttlMs = Number.parseInt(result.ttlMs || '0', 10);
+    if (!ttlMs) return;
+
+    const expiresAt = Date.now() + ttlMs;
+    await redis.hSet(inhabitKey, { expiresAt: `${expiresAt}` });
+    await redis.pExpire(inhabitKey, ttlMs);
+    if (result.npcId) {
+      await redis.pExpire(`airlock:npc:${result.npcId}`, ttlMs);
+    }
+  }
+
+  private async handleInhabitChat(data: { inhabitId?: string; channel?: string; message?: string }): Promise<void> {
+    if (!this.isAirlock || !this.airlockSessionId || !data.inhabitId) {
+      this.sendDevAck('inhabit_chat', false, 'not_authorized');
+      return;
+    }
+
+    const redis = this.messageBus.getRedisClient();
+    const inhabitKey = `airlock:inhabit:${data.inhabitId}`;
+    const result = await redis.hGetAll(inhabitKey);
+
+    if (!result.airlockSessionId || result.airlockSessionId !== this.airlockSessionId) {
+      this.socket.emit('inhabit_denied', { reason: 'not_authorized' });
+      return;
+    }
+
+    if (!result.npcId || !result.zoneId || !data.message || !data.channel) {
+      this.sendDevAck('inhabit_chat', false, 'invalid_payload');
+      return;
+    }
+
+    const channel = `zone:${result.zoneId}:input`;
+    await this.messageBus.publish(channel, {
+      type: MessageType.NPC_CHAT,
+      zoneId: result.zoneId,
+      payload: {
+        companionId: result.npcId,
+        zoneId: result.zoneId,
+        channel: data.channel,
+        text: data.message,
+      },
+      timestamp: Date.now(),
+    });
+
+    this.sendDevAck('inhabit_chat', true);
+  }
+
   async disconnect(): Promise<void> {
     this.socket.disconnect(true);
   }
 
   async cleanup(): Promise<void> {
+    if (this.isAirlock && this.airlockSessionId) {
+      await this.releaseAllInhabits('disconnect');
+      this.isAirlock = false;
+      this.airlockSessionId = null;
+      this.airlockId = null;
+    }
+
     // Notify Zone server that player left
     if (this.characterId && this.currentZoneId) {
       const channel = `zone:${this.currentZoneId}:input`;
@@ -465,11 +820,106 @@ export class GatewayClientSession {
     this.clientInfo = null;
   }
 
+  private async releaseInhabit(inhabitId: string, reason: string, notifyClient: boolean): Promise<void> {
+    if (!this.airlockSessionId) return;
+
+    const redis = this.messageBus.getRedisClient();
+    const inhabitKey = `airlock:inhabit:${inhabitId}`;
+    const result = await redis.hGetAll(inhabitKey);
+
+    if (!result.airlockSessionId || result.airlockSessionId !== this.airlockSessionId) {
+      if (notifyClient) {
+        this.socket.emit('inhabit_denied', { reason: 'not_authorized' });
+      }
+      return;
+    }
+
+    if (result.npcId) {
+      await redis.del(`airlock:npc:${result.npcId}`);
+    }
+
+    await redis.del(inhabitKey);
+    await redis.sRem(`airlock:session:${this.airlockSessionId}:inhabits`, inhabitId);
+
+    if (result.npcId && result.zoneId) {
+      const channel = `zone:${result.zoneId}:input`;
+      await this.messageBus.publish(channel, {
+        type: MessageType.NPC_RELEASE,
+        zoneId: result.zoneId,
+        payload: {
+          companionId: result.npcId,
+          zoneId: result.zoneId,
+        },
+        timestamp: Date.now(),
+      });
+    }
+
+    if (notifyClient) {
+      this.socket.emit('inhabit_revoked', { inhabitId, reason });
+    }
+  }
+
+  private async releaseAllInhabits(reason: string): Promise<void> {
+    if (!this.airlockSessionId) return;
+
+    const redis = this.messageBus.getRedisClient();
+    const sessionSetKey = `airlock:session:${this.airlockSessionId}:inhabits`;
+    const inhabitIds = await redis.sMembers(sessionSetKey);
+
+    for (const inhabitId of inhabitIds) {
+      await this.releaseInhabit(inhabitId, reason, false);
+    }
+
+    await redis.del(sessionSetKey);
+    await redis.del(`airlock:session:${this.airlockSessionId}`);
+  }
+
   updatePing(): void {
     this.lastPingTime = Date.now();
   }
 
   getLastPingTime(): number {
     return this.lastPingTime;
+  }
+
+  private sendDevAck(event: string, ok: boolean, reason?: string): void {
+    if (process.env.NODE_ENV === 'production') {
+      return;
+    }
+
+    this.socket.emit('dev_ack', {
+      event,
+      ok,
+      reason,
+      timestamp: Date.now(),
+    });
+  }
+
+  private isProtocolCompatible(clientVersion: string): boolean {
+    if (process.env.NODE_ENV !== 'production') {
+      return true;
+    }
+
+    const client = this.parseVersion(clientVersion);
+    const server = this.parseVersion(this.PROTOCOL_VERSION);
+
+    if (!client || !server) {
+      return false;
+    }
+
+    return client.major === server.major && client.minor === server.minor;
+  }
+
+  private parseVersion(version: string): { major: number; minor: number; patch: number } | null {
+    const parts = version.split('.').map((part) => Number.parseInt(part, 10));
+    if (parts.length < 2 || parts.some((part) => Number.isNaN(part))) {
+      return null;
+    }
+
+    return {
+      major: parts[0],
+      minor: parts[1],
+      patch: parts[2] ?? 0,
+    };
   }
 }

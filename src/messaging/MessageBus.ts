@@ -11,6 +11,11 @@ export enum MessageType {
   PLAYER_MOVE = 'player_move',
   PLAYER_CHAT = 'player_chat',
   PLAYER_ACTION = 'player_action',
+  PLAYER_COMMAND = 'player_command',
+  PLAYER_PROXIMITY_REFRESH = 'player_proximity_refresh',
+  NPC_CHAT = 'npc_chat',
+  NPC_INHABIT = 'npc_inhabit',
+  NPC_RELEASE = 'npc_release',
 
   // Zone events
   PROXIMITY_UPDATE = 'proximity_update',
@@ -125,6 +130,13 @@ export class MessageBus {
 
     await this.subscriber.unsubscribe(channel);
     logger.info({ channel }, 'Unsubscribed from channel');
+  }
+
+  /**
+   * Get Redis publisher client (for direct access, e.g., cooldowns)
+   */
+  getRedisClient(): RedisClientType {
+    return this.publisher;
   }
 
   /**

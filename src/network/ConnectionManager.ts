@@ -84,12 +84,18 @@ export class ConnectionManager {
 
     // Check protocol version compatibility
     const compatible = this.isProtocolCompatible(data.protocolVersion);
+    if (!compatible && process.env.NODE_ENV !== 'production') {
+      logger.warn(
+        `Dev mode: accepting protocol ${data.protocolVersion} (server ${this.PROTOCOL_VERSION})`
+      );
+    }
 
     // Store client info in session
     session.setClientInfo({
       type: data.clientType,
       version: data.clientVersion,
       capabilities: data.capabilities,
+      isMachine: data.isMachine === true,
     });
 
     // Send handshake acknowledgment
@@ -117,9 +123,33 @@ export class ConnectionManager {
   }
 
   private isProtocolCompatible(clientVersion: string): boolean {
-    // For now, only accept exact match
-    // In the future, implement semantic versioning compatibility
-    return clientVersion === this.PROTOCOL_VERSION;
+    // In dev, allow any protocol to ease multi-client iteration.
+    if (process.env.NODE_ENV !== 'production') {
+      return true;
+    }
+
+    // In production, require major/minor match; ignore patch.
+    const client = this.parseVersion(clientVersion);
+    const server = this.parseVersion(this.PROTOCOL_VERSION);
+
+    if (!client || !server) {
+      return false;
+    }
+
+    return client.major === server.major && client.minor === server.minor;
+  }
+
+  private parseVersion(version: string): { major: number; minor: number; patch: number } | null {
+    const parts = version.split('.').map((part) => Number.parseInt(part, 10));
+    if (parts.length < 2 || parts.some((part) => Number.isNaN(part))) {
+      return null;
+    }
+
+    return {
+      major: parts[0],
+      minor: parts[1],
+      patch: parts[2] ?? 0,
+    };
   }
 
   getPlayerCount(): number {

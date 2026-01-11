@@ -8,4 +8,5 @@
 export { db, prisma } from './DatabaseService';
 export { AccountService } from './services/AccountService';
 export { CharacterService } from './services/CharacterService';
+export { CompanionService } from './services/CompanionService';
 export { ZoneService } from './services/ZoneService';
