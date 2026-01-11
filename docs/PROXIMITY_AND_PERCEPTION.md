@@ -44,9 +44,19 @@ interface ProximityRosterMessage {
   };
 }
 
+interface ProximityEntity {
+  id: string;
+  name: string;
+  type: 'player' | 'npc' | 'companion';
+  bearing: number;     // 0-360 degrees (0=North, 90=East, 180=South, 270=West)
+  elevation: number;   // -90 to 90 degrees (negative=down, positive=up)
+  range: number;       // Distance in feet
+}
+
 interface ProximityChannel {
   count: number;              // Total entities in range
-  sample?: string[];          // Present ONLY if count <= 3
+  sample?: string[];          // Present ONLY if count <= 3 (array of entity names for social context)
+  entities: ProximityEntity[]; // ALWAYS present - full list with spatial navigation data
   lastSpeaker?: string;       // Present ONLY if count <= 3 and someone spoke recently
 }
 ```
@@ -73,16 +83,51 @@ interface ProximityChannel {
 }
 ```
 
-#### 1-on-1 Conversation
+#### 1-on-1 Conversation (with spatial navigation)
+
 ```json
 {
   "type": "proximity_roster",
   "timestamp": 1704859200000,
   "payload": {
     "channels": {
-      "touch": { "count": 1, "sample": ["Shadowblade"] },
-      "say": { "count": 1, "sample": ["Shadowblade"], "lastSpeaker": "Shadowblade" },
-      "shout": { "count": 1, "sample": ["Shadowblade"] },
+      "touch": {
+        "count": 1,
+        "sample": ["Shadowblade"],
+        "entities": [{
+          "id": "char-123",
+          "name": "Shadowblade",
+          "type": "player",
+          "bearing": 45,
+          "elevation": 0,
+          "range": 3.5
+        }]
+      },
+      "say": {
+        "count": 1,
+        "sample": ["Shadowblade"],
+        "lastSpeaker": "Shadowblade",
+        "entities": [{
+          "id": "char-123",
+          "name": "Shadowblade",
+          "type": "player",
+          "bearing": 45,
+          "elevation": 0,
+          "range": 3.5
+        }]
+      },
+      "shout": {
+        "count": 1,
+        "sample": ["Shadowblade"],
+        "entities": [{
+          "id": "char-123",
+          "name": "Shadowblade",
+          "type": "player",
+          "bearing": 45,
+          "elevation": 0,
+          "range": 3.5
+        }]
+      },
       "emote": { "count": 1, "sample": ["Shadowblade"] },
       "see": { "count": 1, "sample": ["Shadowblade"] },
       "hear": { "count": 1, "sample": ["Shadowblade"] },
@@ -131,6 +176,95 @@ interface ProximityChannel {
     "dangerState": false
   }
 }
+```
+
+## Spatial Navigation Data
+
+**CRITICAL DISTINCTION**: Spatial navigation data is **ALWAYS included for ALL entities**, regardless of count. This is separate from social bandwidth.
+
+- **`sample`** (names array): Only present if ≤3 entities - used for **social context/LLM chat**
+- **`entities`** (spatial data): Always present for all entities - used for **combat targeting, movement, positioning**
+
+### Why This Matters
+
+**Combat Example**: Fighting 11 giant ants within 20 feet
+
+- `count: 11`
+- `sample: undefined` (too many for social chat context)
+- `entities: [...]` (all 11 ants with bearing/elevation/range - you need to target specific ones!)
+
+**Social Example**: Chatting with 2 people
+
+- `count: 2`
+- `sample: ["Alice", "Bob"]` (LLM can use names in conversation)
+- `entities: [...]` (also includes spatial data if you want to walk toward them)
+
+### Navigation Fields
+
+Each `ProximityEntity` includes:
+
+- **bearing**: Compass direction from you to the entity (0-360 degrees)
+  - 0° = North
+  - 90° = East
+  - 180° = South
+  - 270° = West
+- **elevation**: Vertical angle from you to the entity (-90 to 90 degrees)
+  - Negative = entity is below you
+  - 0 = same level
+  - Positive = entity is above you
+- **range**: Exact distance to the entity in feet (rounded to 2 decimal places)
+
+### Use Cases
+
+**Text Client Navigation:**
+
+```text
+> proximity
+
+Nearby entities:
+- Shadowblade (NE, 3.5 feet away, same level)
+- Old Merchant (S, 15.2 feet away, 2° below)
+
+> move to merchant
+Moving south toward Old Merchant...
+```
+
+**LLM-Powered Navigation:**
+
+```typescript
+// LLM can use spatial data to navigate naturally
+const nearbyEntities = roster.channels.say.entities;
+if (nearbyEntities) {
+  // "I'll walk over to the merchant" → converts to heading/position
+  const merchant = nearbyEntities.find(e => e.name === 'Old Merchant');
+  // Move toward bearing: merchant.bearing
+}
+```
+
+**Compass Direction Helper:**
+```typescript
+function bearingToCompass(bearing: number): string {
+  const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+  const index = Math.round(bearing / 45) % 8;
+  return directions[index];
+}
+
+// bearing: 45 → "NE"
+// bearing: 180 → "S"
+```
+
+**Elevation Description:**
+```typescript
+function describeElevation(elevation: number): string {
+  if (elevation < -10) return 'far below';
+  if (elevation < -2) return 'below';
+  if (elevation > 10) return 'far above';
+  if (elevation > 2) return 'above';
+  return 'same level';
+}
+
+// elevation: -15 → "far below"
+// elevation: 0 → "same level"
 ```
 
 ## Social Bandwidth Rules

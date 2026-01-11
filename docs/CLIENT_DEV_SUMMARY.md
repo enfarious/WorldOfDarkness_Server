@@ -259,6 +259,45 @@ socket.on('player_peek_response', (data) => {
 
 **Privacy**: Only shows coarse age group (minor/adult), never exact age or personal data.
 
+#### Spatial Navigation (NEW)
+
+Every entity in proximity includes **bearing, elevation, and range** for combat targeting and movement:
+
+```javascript
+socket.on('proximity_roster', (data) => {
+  const nearby = data.payload.channels.say.entities;
+
+  // ALWAYS present, even in crowds (unlike sample names)
+  nearby.forEach(entity => {
+    console.log(`${entity.name} (${entity.type})`);
+    console.log(`  ${bearingToCompass(entity.bearing)}, ${entity.range}ft away`);
+
+    // Combat targeting
+    if (entity.type === 'npc' && entity.name.includes('Ant')) {
+      attackEntity(entity.id);
+    }
+
+    // Movement
+    if (entity.name === 'Old Merchant') {
+      moveToward(entity.bearing);
+    }
+  });
+});
+```
+
+**Key difference**:
+
+- `entities` array: **ALWAYS present** (all entities with spatial data) → use for combat/movement
+- `sample` array: **Only if ≤3** (entity names) → use for LLM social chat
+
+**Example**: Fighting 11 ants
+
+- `count: 11`
+- `sample: undefined` (too many for social context)
+- `entities: [all 11 with bearing/elevation/range]` ← can still target them!
+
+See [FRONTEND_SPATIAL_NAVIGATION.md](FRONTEND_SPATIAL_NAVIGATION.md) for complete guide.
+
 ---
 
 ## Translation Guide
@@ -355,8 +394,10 @@ socket.on('state_update', (data) => {
 ## Documentation Links
 
 - **Full Protocol**: [PROTOCOL.md](PROTOCOL.md)
-- **Movement System Deep Dive**: [docs/MOVEMENT_SYSTEM.md](docs/MOVEMENT_SYSTEM.md)
-- **Content Safety**: [docs/CONTENT_SAFETY.md](docs/CONTENT_SAFETY.md)
+- **Spatial Navigation & Proximity** ⭐ NEW: [FRONTEND_SPATIAL_NAVIGATION.md](FRONTEND_SPATIAL_NAVIGATION.md)
+- **Proximity & Perception**: [PROXIMITY_AND_PERCEPTION.md](PROXIMITY_AND_PERCEPTION.md)
+- **Movement System Deep Dive**: [MOVEMENT_SYSTEM.md](MOVEMENT_SYSTEM.md)
+- **Content Safety**: [CONTENT_SAFETY.md](CONTENT_SAFETY.md)
 - **Quick Start**: [QUICKSTART.md](QUICKSTART.md)
 
 ---

@@ -11,6 +11,8 @@ export class WorldManager {
   private zones: Map<string, ZoneManager> = new Map();
   private io: SocketIOServer | null = null;
   private characterToZone: Map<string, string> = new Map(); // characterId -> zoneId for quick lookups
+  private proximityRosterHashes: Map<string, string> = new Map(); // characterId -> roster hash (for dirty checking - legacy)
+  private previousRosters: Map<string, any> = new Map(); // characterId -> previous roster (for delta calculation)
 
   /**
    * Set Socket.IO server for broadcasting
@@ -92,6 +94,10 @@ export class WorldManager {
     zoneManager.removePlayer(characterId);
     this.characterToZone.delete(characterId);
 
+    // Clean up proximity roster data
+    this.proximityRosterHashes.delete(characterId);
+    this.previousRosters.delete(characterId);
+
     // Broadcast to nearby players that someone left
     this.broadcastNearbyUpdate(zoneId);
   }
@@ -117,7 +123,7 @@ export class WorldManager {
   }
 
   /**
-   * Send proximity roster to a specific player
+   * Send proximity roster delta to a specific player (only if changed)
    */
   private sendProximityRosterToPlayer(characterId: string): void {
     // Find which zone the character is in
@@ -127,15 +133,28 @@ export class WorldManager {
     const zoneManager = this.zones.get(zoneId);
     if (!zoneManager || !this.io) return;
 
-    const roster = zoneManager.calculateProximityRoster(characterId);
-    if (!roster) return;
+    // Get previous roster for delta calculation
+    const previousRoster = this.previousRosters.get(characterId);
+
+    // Calculate delta
+    const result = zoneManager.calculateProximityRosterDelta(characterId, previousRoster);
+
+    // If result is null, roster hasn't changed - don't send
+    if (!result) {
+      return;
+    }
+
+    const { delta, roster } = result;
+
+    // Store new roster for next delta calculation
+    this.previousRosters.set(characterId, roster);
 
     const socketId = zoneManager.getSocketIdForCharacter(characterId);
     if (!socketId) return;
 
-    // Send proximity roster to the player
-    this.io.to(socketId).emit('proximity_roster', {
-      ...roster,
+    // Send proximity roster delta to the player
+    this.io.to(socketId).emit('proximity_roster_delta', {
+      ...delta,
       timestamp: Date.now(),
     });
   }

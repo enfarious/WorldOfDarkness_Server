@@ -30,7 +30,9 @@ See [LORE.md](LORE.md) for complete world background.
 - Automatic health monitoring via Redis heartbeats
 - Database persistence (PostgreSQL)
 - Movement and proximity detection
-- NPC system ready
+- Proximity roster optimization (dirty tracking - 70-90% reduction in network traffic)
+- Spatial navigation (bearing/elevation/range for all entities)
+- NPC system ready with LLM integration (Anthropic, OpenAI-compatible)
 
 **Setting:**
 

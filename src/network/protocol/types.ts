@@ -460,9 +460,19 @@ export const COMMUNICATION_RANGES = {
   cfh: 250,  // Call for Help
 } as const;
 
+export interface ProximityEntity {
+  id: string;
+  name: string;
+  type: 'player' | 'npc' | 'companion';
+  bearing: number;     // 0-360 degrees (0=North, 90=East, 180=South, 270=West)
+  elevation: number;   // -90 to 90 degrees (negative=down, positive=up)
+  range: number;       // Distance in feet
+}
+
 export interface ProximityChannel {
   count: number;              // Total entities in range
-  sample?: string[];          // Present ONLY if count <= 3 (array of entity names)
+  sample?: string[];          // Present ONLY if count <= 3 (array of entity names for social context)
+  entities: ProximityEntity[]; // ALWAYS present - full list with spatial navigation data
   lastSpeaker?: string;       // Present ONLY if count <= 3 and someone spoke recently
 }
 
@@ -479,6 +489,41 @@ export interface ProximityRosterMessage {
       cfh: ProximityChannel;     // 250 feet (Call for Help)
     };
     dangerState: boolean;  // true if in combat/danger (gates CFH usage)
+  };
+  timestamp: number;
+}
+
+// ========== Proximity Roster Delta Updates ==========
+
+export interface ProximityEntityDelta {
+  id: string;
+  bearing?: number;      // Only present if changed
+  elevation?: number;    // Only present if changed
+  range?: number;        // Only present if changed
+}
+
+export interface ProximityChannelDelta {
+  added?: ProximityEntity[];     // Entities that entered range
+  removed?: string[];            // Entity IDs that left range
+  updated?: ProximityEntityDelta[]; // Entities whose position changed
+  count?: number;                // New count (if changed)
+  sample?: string[];             // New sample array (if changed)
+  lastSpeaker?: string | null;   // New lastSpeaker (if changed, null = cleared)
+}
+
+export interface ProximityRosterDeltaMessage {
+  type: 'proximity_roster_delta';
+  payload: {
+    channels?: {
+      touch?: ProximityChannelDelta;
+      say?: ProximityChannelDelta;
+      shout?: ProximityChannelDelta;
+      emote?: ProximityChannelDelta;
+      see?: ProximityChannelDelta;
+      hear?: ProximityChannelDelta;
+      cfh?: ProximityChannelDelta;
+    };
+    dangerState?: boolean;  // Only present if changed
   };
   timestamp: number;
 }
@@ -551,5 +596,6 @@ export type ServerMessage =
   | PongMessage
   | ErrorMessage
   | ProximityRosterMessage
+  | ProximityRosterDeltaMessage
   | CommunicationReceived
   | PlayerPeekResponse;

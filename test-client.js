@@ -319,16 +319,32 @@ function displayProximityRoster(roster) {
 
     if (data.count === 0) {
       log('  No one nearby', 'reset');
-    } else if (data.sample) {
-      // Show individual names (1-3 people)
-      data.sample.forEach(name => {
-        const isLastSpeaker = data.lastSpeaker === name;
+    } else if (data.entities && data.entities.length > 0) {
+      // Display spatial navigation data (always present for combat/movement)
+      data.entities.forEach(entity => {
+        const isLastSpeaker = data.lastSpeaker === entity.name;
         const marker = isLastSpeaker ? ' [Last Speaker]' : '';
-        log(`  - ${name}${marker}`, isLastSpeaker ? 'bright' : 'cyan');
+
+        // Convert bearing to compass direction
+        const directions = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+        const bearingIndex = Math.round(entity.bearing / 45) % 8;
+        const compassDir = directions[bearingIndex];
+
+        // Describe elevation
+        let elevDesc = '';
+        if (entity.elevation < -10) elevDesc = ', far below';
+        else if (entity.elevation < -2) elevDesc = ', below';
+        else if (entity.elevation > 10) elevDesc = ', far above';
+        else if (entity.elevation > 2) elevDesc = ', above';
+
+        log(`  - ${entity.name} (${entity.type})${marker}`, isLastSpeaker ? 'bright' : 'cyan');
+        log(`    ${compassDir} (${entity.bearing}°), ${entity.range}ft${elevDesc}`, 'blue');
       });
-    } else {
-      // Show crowd count (4+ people)
-      log(`  ${data.count} people (crowd mode)`, 'yellow');
+
+      // Show social context note if crowd mode
+      if (!data.sample) {
+        log(`  (Crowd mode: ${data.count} entities - no names in chat context)`, 'yellow');
+      }
     }
   });
 

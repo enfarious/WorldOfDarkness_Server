@@ -17,6 +17,8 @@ export class DistributedWorldManager {
   private npcControllers: Map<string, NPCAIController> = new Map(); // companionId -> controller
   private llmService: LLMService;
   private recentChatMessages: Map<string, { sender: string; channel: string; message: string; timestamp: number }[]> = new Map(); // zoneId -> messages
+  private proximityRosterHashes: Map<string, string> = new Map(); // characterId -> roster hash (for dirty checking - legacy)
+  private previousRosters: Map<string, any> = new Map(); // characterId -> previous roster (for delta calculation)
 
   constructor(
     private messageBus: MessageBus,
@@ -157,6 +159,10 @@ export class DistributedWorldManager {
 
     zoneManager.removePlayer(characterId);
     this.characterToZone.delete(characterId);
+
+    // Clean up proximity roster data
+    this.proximityRosterHashes.delete(characterId);
+    this.previousRosters.delete(characterId);
 
     // Remove from registry
     await this.zoneRegistry.removePlayer(characterId);
@@ -312,17 +318,12 @@ export class DistributedWorldManager {
       const controller = this.npcControllers.get(companion.id);
       if (!controller) continue;
 
-      // Calculate proximity roster for this NPC
-      const npcPosition = {
-        x: companion.positionX,
-        y: companion.positionY,
-        z: companion.positionZ,
-      };
-      const roster = zoneManager.calculateProximityRoster(companion.id);
-      if (!roster) continue;
+      // Calculate proximity roster for this NPC (no hash needed for NPCs - they don't get roster updates)
+      const result = zoneManager.calculateProximityRoster(companion.id);
+      if (!result) continue;
 
       // Generate and broadcast NPC response
-      this.handleNPCResponse(companion, roster, contextMessages, zoneId);
+      this.handleNPCResponse(companion, result.roster, contextMessages, zoneId);
     }
   }
 
@@ -433,7 +434,7 @@ export class DistributedWorldManager {
   }
 
   /**
-   * Send proximity roster to a specific player
+   * Send proximity roster delta to a specific player (only if changed)
    */
   private async sendProximityRosterToPlayer(characterId: string): Promise<void> {
     const zoneId = this.characterToZone.get(characterId);
@@ -442,18 +443,31 @@ export class DistributedWorldManager {
     const zoneManager = this.zones.get(zoneId);
     if (!zoneManager) return;
 
-    const roster = zoneManager.calculateProximityRoster(characterId);
-    if (!roster) return;
+    // Get previous roster for delta calculation
+    const previousRoster = this.previousRosters.get(characterId);
+
+    // Calculate delta
+    const result = zoneManager.calculateProximityRosterDelta(characterId, previousRoster);
+
+    // If result is null, roster hasn't changed - don't send
+    if (!result) {
+      return;
+    }
+
+    const { delta, roster } = result;
+
+    // Store new roster for next delta calculation
+    this.previousRosters.set(characterId, roster);
 
     const socketId = zoneManager.getSocketIdForCharacter(characterId);
     if (!socketId) return;
 
-    // Publish client message to Gateway
+    // Publish delta message to Gateway
     const clientMessage: ClientMessagePayload = {
       socketId,
-      event: 'proximity_roster',
+      event: 'proximity_roster_delta',
       data: {
-        ...roster,
+        ...delta,
         timestamp: Date.now(),
       },
     };
