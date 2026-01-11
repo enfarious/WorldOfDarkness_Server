@@ -15,6 +15,9 @@ Write-Host "Port: $Port" -ForegroundColor Gray
 Write-Host "Redis: $RedisUrl" -ForegroundColor Gray
 Write-Host "========================================`n" -ForegroundColor Cyan
 
+# Name the console window for easier restart/cleanup.
+$Host.UI.RawUI.WindowTitle = "World of Darkness - Gateway"
+
 # Set environment variables
 $env:SERVER_ID = $ServerId
 $env:GATEWAY_PORT = $Port

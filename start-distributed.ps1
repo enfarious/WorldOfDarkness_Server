@@ -3,6 +3,8 @@
 
 param(
     [string]$RedisUrl = "redis://localhost:6379",
+    [string]$GatewayWindowTitle = "World of Darkness - Gateway",
+    [string]$ZoneWindowTitle = "World of Darkness - Zone",
     [switch]$SkipRedisCheck
 )
 
@@ -34,14 +36,14 @@ Write-Host "`nStarting servers..." -ForegroundColor Yellow
 
 # Start Gateway in new window
 Write-Host "Launching Gateway Server..." -ForegroundColor Cyan
-Start-Process powershell -ArgumentList "-NoExit", "-Command", ".\start-gateway.ps1 -RedisUrl '$RedisUrl'"
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "`$Host.UI.RawUI.WindowTitle = '$GatewayWindowTitle'; .\start-gateway.ps1 -RedisUrl '$RedisUrl'"
 
 # Wait a moment for Gateway to initialize
 Start-Sleep -Seconds 2
 
 # Start Zone Server in new window
 Write-Host "Launching Zone Server..." -ForegroundColor Cyan
-Start-Process powershell -ArgumentList "-NoExit", "-Command", ".\start-zone.ps1 -RedisUrl '$RedisUrl'"
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "`$Host.UI.RawUI.WindowTitle = '$ZoneWindowTitle'; .\start-zone.ps1 -RedisUrl '$RedisUrl'"
 
 Write-Host "`n========================================" -ForegroundColor Cyan
 Write-Host "Servers launched!" -ForegroundColor Green

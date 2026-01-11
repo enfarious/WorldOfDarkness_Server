@@ -12,10 +12,17 @@ Write-Host "========================================`n" -ForegroundColor Cyan
 # Find and close PowerShell windows running the servers
 Write-Host "Stopping existing servers..." -ForegroundColor Yellow
 
+# Window titles for server consoles
+$gatewayWindowTitle = "World of Darkness - Gateway"
+$zoneWindowTitle = "World of Darkness - Zone"
+
 # Get all PowerShell windows running tsx watch commands
 $serverWindows = Get-Process -Name "powershell" -ErrorAction SilentlyContinue | Where-Object {
     $cmdLine = (Get-CimInstance Win32_Process -Filter "ProcessId = $($_.Id)").CommandLine
-    $cmdLine -like "*tsx*gateway-main*" -or $cmdLine -like "*tsx*zoneserver-main*"
+    $_.MainWindowTitle -like "*$gatewayWindowTitle*" -or
+    $_.MainWindowTitle -like "*$zoneWindowTitle*" -or
+    $cmdLine -like "*tsx*gateway-main*" -or
+    $cmdLine -like "*tsx*zoneserver-main*"
 }
 
 if ($serverWindows) {
@@ -48,7 +55,7 @@ Start-Sleep -Seconds 3
 
 # Start fresh servers
 Write-Host "`nStarting fresh servers..." -ForegroundColor Green
-& "$PSScriptRoot\start-distributed.ps1" -RedisUrl $RedisUrl
+& "$PSScriptRoot\start-distributed.ps1" -RedisUrl $RedisUrl -GatewayWindowTitle $gatewayWindowTitle -ZoneWindowTitle $zoneWindowTitle
 
 Write-Host "`n✓ Restart complete!" -ForegroundColor Green
 Write-Host "========================================`n" -ForegroundColor Cyan

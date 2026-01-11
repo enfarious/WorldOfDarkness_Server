@@ -45,5 +45,5 @@ tmp/
 # Cursor
 .cursorignore
 .cursorindexingignore
-/.claude
-WorldOfDarkness_Server.zip
+
+/.agents

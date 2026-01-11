@@ -1,6 +1,6 @@
 import express, { Express } from 'express';
 import cors from 'cors';
-import { Server as HTTPServer } from 'http';
+import { createServer, Server as HTTPServer } from 'http';
 import { Server as SocketIOServer } from 'socket.io';
 import { logger } from '@/utils/logger';
 import { db } from '@/database';
@@ -16,6 +16,7 @@ interface GameServerConfig {
 export class GameServer {
   private app: Express;
   private httpServer: HTTPServer | null = null;
+  private wsServer: HTTPServer | null = null;
   private io: SocketIOServer | null = null;
   private connectionManager: ConnectionManager | null = null;
   private worldManager: WorldManager | null = null;
@@ -61,12 +62,18 @@ export class GameServer {
     await db.connect();
 
     // Start HTTP server
-    this.httpServer = this.app.listen(this.config.port, () => {
+    this.httpServer = createServer(this.app);
+    this.httpServer.listen(this.config.port, () => {
       logger.info(`HTTP server listening on port ${this.config.port}`);
     });
 
-    // Start WebSocket server
-    this.io = new SocketIOServer(this.httpServer, {
+    // Start WebSocket server on its own port
+    this.wsServer = createServer();
+    this.wsServer.listen(this.config.wsPort, () => {
+      logger.info(`WebSocket server listening on port ${this.config.wsPort}`);
+    });
+
+    this.io = new SocketIOServer(this.wsServer, {
       cors: {
         origin: '*', // Configure properly in production
         methods: ['GET', 'POST'],
@@ -136,6 +143,15 @@ export class GameServer {
       await new Promise<void>((resolve) => {
         this.io?.close(() => {
           logger.info('WebSocket server closed');
+          resolve();
+        });
+      });
+    }
+
+    if (this.wsServer) {
+      await new Promise<void>((resolve) => {
+        this.wsServer?.close(() => {
+          logger.info('WebSocket HTTP server closed');
           resolve();
         });
       });

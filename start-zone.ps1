@@ -4,7 +4,7 @@
 param(
     [string]$ServerId = "zone-1",
     [string]$AssignedZones = "",  # Empty = all zones
-    [int]$TickRate = 20,
+    [int]$TickRate = 10,
     [string]$RedisUrl = "redis://localhost:6379"
 )
 
@@ -22,6 +22,9 @@ if ($AssignedZones -eq "") {
 }
 
 Write-Host "========================================`n" -ForegroundColor Cyan
+
+# Name the console window for easier restart/cleanup.
+$Host.UI.RawUI.WindowTitle = "World of Darkness - Zone"
 
 # Set environment variables
 $env:SERVER_ID = $ServerId
