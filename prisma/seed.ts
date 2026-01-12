@@ -128,6 +128,48 @@ Speech pattern: Calm and measured, uses "traveler" or "friend" when addressing o
   });
   console.log(`✓ Created NPC: ${merchant.name}`);
 
+  // Create basic combat ability (hybrid metadata)
+  console.log('Creating basic combat ability...');
+  await prisma.ability.upsert({
+    where: { id: 'basic_attack' },
+    update: {
+      name: 'Basic Attack',
+      description: 'A simple weapon strike.',
+      data: {
+        targetType: 'enemy',
+        range: 2,
+        cooldown: 0,
+        atbCost: 100,
+        staminaCost: 5,
+        damage: {
+          type: 'physical',
+          amount: 8,
+          scalingStat: 'strength',
+          scalingMultiplier: 0.4,
+        },
+      },
+    },
+    create: {
+      id: 'basic_attack',
+      name: 'Basic Attack',
+      description: 'A simple weapon strike.',
+      data: {
+        targetType: 'enemy',
+        range: 2,
+        cooldown: 0,
+        atbCost: 100,
+        staminaCost: 5,
+        damage: {
+          type: 'physical',
+          amount: 8,
+          scalingStat: 'strength',
+          scalingMultiplier: 0.4,
+        },
+      },
+    },
+  });
+  console.log('✓ Created ability: Basic Attack');
+
   // Create some basic item templates
   console.log('Creating item templates...');
 
@@ -202,6 +244,7 @@ Speech pattern: Calm and measured, uses "traveler" or "friend" when addressing o
   console.log(`  - 1 account: ${testAccount.username}`);
   console.log(`  - 1 character: ${testCharacter.name}`);
   console.log(`  - 1 NPC: ${merchant.name}`);
+  console.log(`  - 1 ability (basic_attack)`);
   console.log(`  - 2 item templates`);
   console.log(`  - Character equipped with ${rustySword.name} and 5x ${healthPotion.name}`);
   console.log('\nYou can now connect with:');

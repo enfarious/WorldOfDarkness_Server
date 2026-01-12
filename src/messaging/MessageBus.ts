@@ -13,6 +13,7 @@ export enum MessageType {
   PLAYER_ACTION = 'player_action',
   PLAYER_COMMAND = 'player_command',
   PLAYER_PROXIMITY_REFRESH = 'player_proximity_refresh',
+  PLAYER_COMBAT_ACTION = 'player_combat_action',
   NPC_CHAT = 'npc_chat',
   NPC_INHABIT = 'npc_inhabit',
   NPC_RELEASE = 'npc_release',

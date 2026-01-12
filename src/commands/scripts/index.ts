@@ -9,6 +9,8 @@ import { sayCommand } from './social/say';
 import { tellCommand } from './social/tell';
 import { emoteCommand } from './social/emote';
 import { shoutCommand } from './social/shout';
+import { attackCommand } from './combat/attack';
+import { castCommand } from './combat/cast';
 
 import { lookCommand } from './perception/look';
 import { listenCommand } from './perception/listen';
@@ -44,6 +46,10 @@ export function registerAllCommands(registry: CommandRegistry): void {
   // Movement commands
   registry.register(moveCommand);
   registry.register(stopCommand);
+
+  // Combat commands
+  registry.register(attackCommand);
+  registry.register(castCommand);
 }
 
 /**
@@ -59,5 +65,7 @@ export function getAllCommandNames(): string[] {
     'help', 'stats', 'inventory',
     // Movement
     'move', 'stop',
+    // Combat
+    'attack', 'cast',
   ];
 }

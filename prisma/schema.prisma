@@ -234,6 +234,22 @@ model Companion {
 }
 
 // ============================================================================
+// Abilities (Hybrid: DB metadata + code execution)
+// ============================================================================
+
+model Ability {
+  id          String   @id
+  name        String
+  description String?
+  data        Json
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("abilities")
+}
+
+// ============================================================================
 // Factions & Reputation
 // ============================================================================
 

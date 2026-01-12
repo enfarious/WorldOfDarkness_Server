@@ -133,6 +133,19 @@ export class ZoneManager {
     return this.entities.get(entityId) || null;
   }
 
+  findEntityByName(name: string): Entity | null {
+    const needle = name.trim().toLowerCase();
+    if (!needle) return null;
+
+    for (const entity of this.entities.values()) {
+      if (entity.name.toLowerCase() === needle) {
+        return entity;
+      }
+    }
+
+    return null;
+  }
+
   /**
    * Record who last spoke to a specific entity
    */

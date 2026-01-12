@@ -275,6 +275,26 @@ export class GatewayClientSession {
           timestamp: Date.now(),
         });
         break;
+      case 'combat_action':
+        messageType = MessageType.PLAYER_COMBAT_ACTION;
+        const combatData = data as CombatActionMessage['payload'];
+        await this.messageBus.publish(channel, {
+          type: messageType,
+          zoneId: this.currentZoneId,
+          characterId: this.characterId,
+          socketId: this.socket.id,
+          payload: {
+            characterId: this.characterId,
+            zoneId: this.currentZoneId,
+            socketId: this.socket.id,
+            abilityId: combatData.abilityId,
+            targetId: combatData.targetId,
+            position: combatData.position,
+            timestamp: combatData.timestamp,
+          },
+          timestamp: Date.now(),
+        });
+        break;
 
       default:
         logger.warn({ event }, 'Unhandled game event for routing');
