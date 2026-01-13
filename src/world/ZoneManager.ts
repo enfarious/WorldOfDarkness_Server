@@ -190,10 +190,10 @@ export class ZoneManager {
    */
   private calculateBearing(origin: Vector3, target: Vector3): number {
     const dx = target.x - origin.x;
-    const dy = target.y - origin.y;
+    const dz = target.z - origin.z;
 
     // Calculate angle in radians, then convert to degrees
-    let bearing = Math.atan2(dx, dy) * (180 / Math.PI);
+    let bearing = Math.atan2(dx, dz) * (180 / Math.PI);
 
     // Normalize to 0-360 range
     if (bearing < 0) {
@@ -213,10 +213,10 @@ export class ZoneManager {
     const dz = target.z - origin.z;
 
     // Calculate horizontal distance
-    const horizontalDistance = Math.sqrt(dx * dx + dy * dy);
+    const horizontalDistance = Math.sqrt(dx * dx + dz * dz);
 
     // Calculate elevation angle in radians, then convert to degrees
-    const elevation = Math.atan2(dz, horizontalDistance) * (180 / Math.PI);
+    const elevation = Math.atan2(dy, horizontalDistance) * (180 / Math.PI);
 
     return Math.round(elevation);
   }

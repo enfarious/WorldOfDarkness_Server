@@ -621,7 +621,7 @@ export class DistributedWorldManager {
                 y: context.position.y + unitY * travel,
                 z: context.position.z + unitZ * travel,
               };
-              nextHeading = this.calculateHeadingFromVector(dx, dy);
+              nextHeading = this.calculateHeadingFromVector(dx, dz);
             }
           } else if (nextHeading !== undefined) {
             const derived = StatCalculator.calculateDerivedStats(
@@ -641,8 +641,8 @@ export class DistributedWorldManager {
 
             nextPosition = {
               x: context.position.x + Math.sin(radians) * distance,
-              y: context.position.y + Math.cos(radians) * distance,
-              z: context.position.z,
+              y: context.position.y,
+              z: context.position.z + Math.cos(radians) * distance,
             };
           } else {
             return {
@@ -821,9 +821,9 @@ export class DistributedWorldManager {
     return byName && byName.isAlive ? byName : null;
   }
 
-  private calculateHeadingFromVector(dx: number, dy: number): number {
-    if (dx === 0 && dy === 0) return 0;
-    let bearing = Math.atan2(dx, dy) * (180 / Math.PI);
+  private calculateHeadingFromVector(dx: number, dz: number): number {
+    if (dx === 0 && dz === 0) return 0;
+    let bearing = Math.atan2(dx, dz) * (180 / Math.PI);
     if (bearing < 0) {
       bearing += 360;
     }

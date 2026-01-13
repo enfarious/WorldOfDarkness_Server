@@ -36,6 +36,10 @@ export class CommandExecutor {
       // Parse command string
       const parsed = this.parser.parse(rawCommand);
       this.parser.validate(parsed);
+      logger.debug(
+        { rawCommand, parsed, characterId: context.characterId, zoneId: context.zoneId },
+        'Command parsed'
+      );
 
       // Lookup command definition
       const definition = this.registry.get(parsed.command);
@@ -43,6 +47,10 @@ export class CommandExecutor {
         const suggestions = this.parser.suggestCommand(
           parsed.command,
           this.registry.getAllNames()
+        );
+        logger.warn(
+          { rawCommand, command: parsed.command, suggestions, characterId: context.characterId },
+          'Unknown command'
         );
 
         return {
@@ -57,6 +65,10 @@ export class CommandExecutor {
       if (definition.permissions && definition.permissions.length > 0) {
         const hasPermission = await this.checkPermissions(context, definition.permissions);
         if (!hasPermission) {
+          logger.warn(
+            { command: definition.name, characterId: context.characterId },
+            'Command permission denied'
+          );
           return {
             success: false,
             error: 'You do not have permission to use this command.',
@@ -72,6 +84,10 @@ export class CommandExecutor {
         );
 
         if (cooldownRemaining > 0) {
+          logger.debug(
+            { command: definition.name, cooldownRemaining, characterId: context.characterId },
+            'Command on cooldown'
+          );
           return {
             success: false,
             error: `Command on cooldown (${(cooldownRemaining / 1000).toFixed(1)}s remaining)`,
@@ -81,6 +97,10 @@ export class CommandExecutor {
 
       // Check target requirement
       if (definition.requiresTarget && !context.currentTarget && parsed.positionalArgs.length === 0) {
+        logger.debug(
+          { command: definition.name, characterId: context.characterId },
+          'Command missing required target'
+        );
         return {
           success: false,
           error: 'This command requires a target. Use /target <entity> or provide a target argument.',
@@ -90,6 +110,10 @@ export class CommandExecutor {
       // Validate parameters (basic type checking)
       const validationError = this.validateParameters(parsed, definition);
       if (validationError) {
+        logger.debug(
+          { command: definition.name, error: validationError, characterId: context.characterId },
+          'Command validation failed'
+        );
         return {
           success: false,
           error: validationError,
@@ -98,6 +122,15 @@ export class CommandExecutor {
 
       // Execute command handler
       const result = await definition.handler(context, parsed);
+      logger.debug(
+        {
+          command: definition.name,
+          success: result.success,
+          characterId: context.characterId,
+          hasEvents: Boolean(result.events?.length),
+        },
+        'Command executed'
+      );
 
       // Set cooldown if command succeeded
       if (result.success && definition.cooldown && definition.cooldown > 0) {

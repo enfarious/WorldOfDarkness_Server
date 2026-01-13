@@ -7,6 +7,9 @@ param(
     [string]$RedisUrl = "redis://localhost:6379"
 )
 
+$repoRoot = (Resolve-Path $PSScriptRoot).Path
+Push-Location $repoRoot
+
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Ashes & Aether - Gateway Server" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
@@ -23,5 +26,9 @@ $env:SERVER_ID = $ServerId
 $env:GATEWAY_PORT = $Port
 $env:REDIS_URL = $RedisUrl
 
-# Start server
-npm run dev:gateway
+try {
+    # Start server
+    npm run dev:gateway
+} finally {
+    Pop-Location
+}

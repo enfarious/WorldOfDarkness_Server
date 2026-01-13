@@ -8,26 +8,73 @@ param(
     [switch]$SkipRedisCheck
 )
 
+$repoRoot = (Resolve-Path $PSScriptRoot).Path
+
 Write-Host "`n========================================" -ForegroundColor Cyan
 Write-Host "Ashes & Aether - Distributed Setup" -ForegroundColor Cyan
 Write-Host "========================================`n" -ForegroundColor Cyan
 
+function Test-PortFast {
+    param(
+        [string]$Hostname = "localhost",
+        [int]$Port = 6379,
+        [int]$TimeoutMs = 500
+    )
+
+    $client = New-Object System.Net.Sockets.TcpClient
+    try {
+        $async = $client.BeginConnect($Hostname, $Port, $null, $null)
+        if (-not $async.AsyncWaitHandle.WaitOne($TimeoutMs, $false)) {
+            return $false
+        }
+        $client.EndConnect($async) | Out-Null
+        return $true
+    } catch {
+        return $false
+    } finally {
+        $client.Close()
+    }
+}
+
+function Start-RedisIfMissing {
+    Write-Host "Checking Redis connection..." -ForegroundColor Yellow
+
+    $redisProcess = Get-Process -Name "redis-server" -ErrorAction SilentlyContinue
+    if ($redisProcess) {
+        Write-Host "OK - Redis process detected (PID $($redisProcess.Id))" -ForegroundColor Green
+        return $true
+    }
+
+    if (Test-PortFast) {
+        Write-Host "OK - Redis is running on localhost:6379" -ForegroundColor Green
+        return $true
+    }
+
+    Write-Host "Redis not running. Starting redis-server..." -ForegroundColor Yellow
+    try {
+        Start-Process -FilePath "F:\Servers\redis\redis-server.exe" -WindowStyle Minimized | Out-Null
+    } catch {
+        Write-Host "WARN - Could not start Redis (redis-server not found or failed to launch)." -ForegroundColor Red
+        return $false
+    }
+
+    $deadline = (Get-Date).AddSeconds(5)
+    while ((Get-Date) -lt $deadline) {
+        if (Test-PortFast) {
+            Write-Host "OK - Redis started on localhost:6379" -ForegroundColor Green
+            return $true
+        }
+        Start-Sleep -Milliseconds 250
+    }
+
+    Write-Host "WARN - Redis did not start within 5 seconds." -ForegroundColor Red
+    return $false
+}
+
 # Check if Redis is running
 if (-not $SkipRedisCheck) {
-    Write-Host "Checking Redis connection..." -ForegroundColor Yellow
-    try {
-        $null = Test-NetConnection -ComputerName localhost -Port 6379 -InformationLevel Quiet -WarningAction SilentlyContinue
-        if ($?) {
-            Write-Host "✓ Redis is running on localhost:6379" -ForegroundColor Green
-        } else {
-            Write-Host "✗ Redis is not running!" -ForegroundColor Red
-            Write-Host "`nPlease start Redis first:" -ForegroundColor Yellow
-            Write-Host "  redis-server" -ForegroundColor Gray
-            Write-Host "`nOr skip this check with -SkipRedisCheck" -ForegroundColor Gray
-            exit 1
-        }
-    } catch {
-        Write-Host "✗ Could not check Redis connection" -ForegroundColor Yellow
+    $redisOk = Start-RedisIfMissing
+    if (-not $redisOk) {
         Write-Host "Continuing anyway..." -ForegroundColor Gray
     }
 }
@@ -36,14 +83,14 @@ Write-Host "`nStarting servers..." -ForegroundColor Yellow
 
 # Start Gateway in new window
 Write-Host "Launching Gateway Server..." -ForegroundColor Cyan
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "`$Host.UI.RawUI.WindowTitle = '$GatewayWindowTitle'; .\start-gateway.ps1 -RedisUrl '$RedisUrl'"
+Start-Process powershell -WorkingDirectory $repoRoot -ArgumentList "-NoExit", "-Command", "`$Host.UI.RawUI.WindowTitle = '$GatewayWindowTitle'; & '$repoRoot\\start-gateway.ps1' -RedisUrl '$RedisUrl'"
 
 # Wait a moment for Gateway to initialize
 Start-Sleep -Seconds 2
 
 # Start Zone Server in new window
 Write-Host "Launching Zone Server..." -ForegroundColor Cyan
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "`$Host.UI.RawUI.WindowTitle = '$ZoneWindowTitle'; .\start-zone.ps1 -RedisUrl '$RedisUrl'"
+Start-Process powershell -WorkingDirectory $repoRoot -ArgumentList "-NoExit", "-Command", "`$Host.UI.RawUI.WindowTitle = '$ZoneWindowTitle'; & '$repoRoot\\start-zone.ps1' -RedisUrl '$RedisUrl'"
 
 Write-Host "`n========================================" -ForegroundColor Cyan
 Write-Host "Servers launched!" -ForegroundColor Green

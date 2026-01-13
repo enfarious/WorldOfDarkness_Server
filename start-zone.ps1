@@ -8,6 +8,9 @@ param(
     [string]$RedisUrl = "redis://localhost:6379"
 )
 
+$repoRoot = (Resolve-Path $PSScriptRoot).Path
+Push-Location $repoRoot
+
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host "Ashes & Aether - Zone Server" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
@@ -32,5 +35,9 @@ $env:ASSIGNED_ZONES = $AssignedZones
 $env:TICK_RATE = $TickRate
 $env:REDIS_URL = $RedisUrl
 
-# Start server
-npm run dev:zone
+try {
+    # Start server
+    npm run dev:zone
+} finally {
+    Pop-Location
+}

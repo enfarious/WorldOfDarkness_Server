@@ -6,6 +6,9 @@ param(
     [int]$MaxRestarts = 0  # 0 = unlimited
 )
 
+$repoRoot = (Resolve-Path $PSScriptRoot).Path
+Push-Location $repoRoot
+
 $ServerScript = "src/index.ts"
 $LogDir = "logs"
 $RestartCount = 0
@@ -85,4 +88,5 @@ finally {
     Write-Host "Total restarts: $RestartCount" -ForegroundColor Gray
     Write-Host "Log saved to: $LogFile" -ForegroundColor Gray
     Write-Host "========================================" -ForegroundColor Cyan
+    Pop-Location
 }
