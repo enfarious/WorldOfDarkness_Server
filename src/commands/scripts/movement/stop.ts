@@ -12,7 +12,7 @@ export const stopCommand: CommandDefinition = {
   usage: '/stop',
   examples: ['/stop'],
 
-  handler: async (context: CommandContext, args: ParsedCommand): Promise<CommandResult> => {
+  handler: async (context: CommandContext, _args: ParsedCommand): Promise<CommandResult> => {
     return {
       success: true,
       message: 'You stop moving.',
