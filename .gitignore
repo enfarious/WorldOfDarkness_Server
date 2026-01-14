@@ -41,9 +41,22 @@ prisma/migrations/
 .cache/
 temp/
 tmp/
+.venv/
+data/
 
 # Cursor
 .cursorignore
 .cursorindexingignore
 
-/.agents
+.agents/
+AGENTS.*
+*.agents
+
+.claude/
+claude*
+tmpclaude*
+
+dump*
+*dump
+
+USGS*

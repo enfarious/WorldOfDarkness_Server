@@ -60,16 +60,39 @@ def sanitize_filename(name: str) -> str:
     return cleaned.strip("_")
 
 
-def download_file(url: str, dest: Path) -> None:
+def download_file(url: str, dest: Path, max_retries: int = 3) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
+        print(f"  Skipping {dest.name} (already exists)")
         return
-    with requests.get(url, stream=True, timeout=120) as resp:
-        resp.raise_for_status()
-        with open(dest, "wb") as handle:
-            for chunk in resp.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    handle.write(chunk)
+
+    for attempt in range(max_retries):
+        try:
+            print(f"  Downloading {dest.name}...")
+            with requests.get(url, stream=True, timeout=300) as resp:
+                resp.raise_for_status()
+                total = int(resp.headers.get("content-length", 0))
+                downloaded = 0
+                with open(dest, "wb") as handle:
+                    for chunk in resp.iter_content(chunk_size=1024 * 1024):
+                        if chunk:
+                            handle.write(chunk)
+                            downloaded += len(chunk)
+                            if total > 0:
+                                pct = (downloaded / total) * 100
+                                print(f"\r    {downloaded // (1024*1024)}MB / {total // (1024*1024)}MB ({pct:.0f}%)", end="", flush=True)
+                print()  # newline after progress
+            return  # Success
+        except (requests.exceptions.RequestException, ConnectionError, TimeoutError) as e:
+            if dest.exists():
+                dest.unlink()  # Remove partial file
+            if attempt < max_retries - 1:
+                wait = (attempt + 1) * 10
+                print(f"  Download failed ({e}), retrying in {wait}s...")
+                import time
+                time.sleep(wait)
+            else:
+                raise RuntimeError(f"Failed to download {url} after {max_retries} attempts: {e}")
 
 
 def main() -> None:
