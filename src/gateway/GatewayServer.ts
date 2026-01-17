@@ -9,6 +9,7 @@ import { logger } from '@/utils/logger';
 import { db } from '@/database';
 import { MessageBus, MessageType, ZoneRegistry, type ClientMessagePayload, type MessageEnvelope } from '@/messaging';
 import { GatewayConnectionManager } from './GatewayConnectionManager';
+import { setupAuth, registerAuthRoutes } from '@/auth';
 
 interface GatewayConfig {
   port: number;
@@ -99,6 +100,22 @@ export class GatewayServer {
       });
     });
 
+    // Serve static web content
+    const publicDir = path.join(process.cwd(), 'public');
+    if (fs.existsSync(publicDir)) {
+      this.app.use(express.static(publicDir));
+    }
+
+    // SPA fallback - serve index.html for client-side routing
+    this.app.get('*', (_req, res, next) => {
+      const indexPath = path.join(process.cwd(), 'public', 'index.html');
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        next();
+      }
+    });
+
     // API routes
     this.app.get('/api/info', async (_req, res) => {
       const zones = await this.zoneRegistry.getAllZoneAssignments();
@@ -136,6 +153,11 @@ export class GatewayServer {
     logger.info('Connecting to database...');
     await db.connect();
 
+    // Setup authentication
+    logger.info('Setting up Replit Auth...');
+    await setupAuth(this.app);
+    registerAuthRoutes(this.app);
+
     // Connect to Redis
     logger.info('Connecting to Redis...');
     await this.messageBus.connect();
@@ -149,7 +171,7 @@ export class GatewayServer {
     });
 
     // Start HTTP server
-    this.httpServer = this.app.listen(this.config.port, () => {
+    this.httpServer = this.app.listen(this.config.port, '0.0.0.0', () => {
       logger.info(`Gateway HTTP server listening on port ${this.config.port}`);
     });
 

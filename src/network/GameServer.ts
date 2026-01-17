@@ -9,7 +9,6 @@ import { logger } from '@/utils/logger';
 import { db } from '@/database';
 import { ConnectionManager } from './ConnectionManager';
 import { WorldManager } from '@/world/WorldManager';
-import { setupAuth, registerAuthRoutes } from '@/auth';
 
 interface GameServerConfig {
   port: number;
@@ -106,11 +105,6 @@ export class GameServer {
     // Connect to database
     logger.info('Connecting to database...');
     await db.connect();
-
-    // Setup authentication (must be done before starting server)
-    logger.info('Setting up Replit Auth...');
-    await setupAuth(this.app);
-    registerAuthRoutes(this.app);
 
     // Start HTTP server (shared with WebSocket)
     this.httpServer = createServer(this.app);
